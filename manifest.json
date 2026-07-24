@@ -1,0 +1,9 @@
+{
+  "id": "dragdrop",
+  "name": "DragDrop",
+  "version": "0.1.0",
+  "minAppVersion": "1.5.11",
+  "description": "Drag Markdown blocks into Canvas as references or generated note cards.",
+  "author": "rex18",
+  "isDesktopOnly": false
+}

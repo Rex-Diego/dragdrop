@@ -1,0 +1,113 @@
+.markdown-source-view.mod-cm6 .dragdrop-handle {
+  position: relative;
+  display: inline-block;
+  width: 0;
+  height: 0;
+  vertical-align: top;
+  cursor: grab;
+}
+
+.markdown-source-view.mod-cm6 .dragdrop-handle-icon {
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline-end: var(--size-4-1);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--icon-size);
+  height: var(--icon-size);
+  padding: var(--size-4-1);
+  color: var(--text-muted);
+  border-radius: var(--radius-s);
+  opacity: 0;
+  transition: opacity 80ms ease-in-out, color 80ms ease-in-out;
+}
+
+.markdown-source-view.mod-cm6 .cm-line:hover > .dragdrop-handle .dragdrop-handle-icon,
+.markdown-source-view.mod-cm6 .dragdrop-handle:hover .dragdrop-handle-icon,
+.markdown-source-view.mod-cm6 .dragdrop-handle:focus-visible .dragdrop-handle-icon {
+  opacity: 1;
+}
+
+@media (pointer: coarse) {
+  .markdown-source-view.mod-cm6 .dragdrop-handle {
+    touch-action: none;
+  }
+
+  .markdown-source-view.mod-cm6 .dragdrop-handle-icon {
+    width: 44px;
+    height: 44px;
+    opacity: 1;
+  }
+}
+
+.markdown-source-view.mod-cm6 .dragdrop-handle:hover .dragdrop-handle-icon {
+  color: var(--text-accent);
+  background: var(--background-modifier-hover);
+}
+
+.markdown-source-view.mod-cm6 .dragdrop-handle:focus-visible {
+  outline: none;
+}
+
+.markdown-source-view.mod-cm6 .dragdrop-handle:focus-visible .dragdrop-handle-icon {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: 2px;
+}
+
+.dragdrop-ghost {
+  --dragdrop-x: 0px;
+  --dragdrop-y: 0px;
+  --dragdrop-preview-width: 400px;
+
+  position: fixed;
+  inset-block-start: 0;
+  inset-inline-start: 0;
+  z-index: var(--layer-popover);
+  width: var(--dragdrop-preview-width);
+  max-height: min(70vh, 600px);
+  padding: 0;
+  overflow: hidden auto;
+  pointer-events: none;
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-m);
+  transform: translate(var(--dragdrop-x), var(--dragdrop-y));
+  opacity: 0.96;
+}
+
+.dragdrop-ghost.dragdrop-ghost-pending {
+  visibility: hidden;
+}
+
+.dragdrop-ghost.dragdrop-ghost-ready {
+  visibility: visible;
+}
+
+.dragdrop-ghost.dragdrop-ghost-valid {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: 2px;
+}
+
+.dragdrop-ghost .callout {
+  margin-block: 0;
+}
+
+.dragdrop-empty-drag-image {
+  position: fixed;
+  width: 1px;
+  height: 1px;
+  pointer-events: none;
+  opacity: 0;
+}
+
+.modal.dragdrop-file-name-modal .dragdrop-validation {
+  color: var(--text-error);
+}
+
+.modal.dragdrop-file-name-modal button:focus-visible,
+.dragdrop-settings input:focus-visible,
+.dragdrop-settings select:focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: 2px;
+}
