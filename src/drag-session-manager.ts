@@ -42,6 +42,7 @@ import {
   matchesPointerDrag,
 } from "./pointer-drag";
 import type { DragDropSettings } from "./settings-model";
+import { isCanvasView } from "./canvas-types";
 
 const SESSION_MIME = "application/x-dragdrop-session";
 
@@ -59,6 +60,23 @@ interface PointerDrag {
   startX: number;
   startY: number;
   active: boolean;
+}
+
+interface PointerCaptureElement extends Element {
+  setPointerCapture(pointerId: number): void;
+  releasePointerCapture(pointerId: number): void;
+  hasPointerCapture(pointerId: number): boolean;
+}
+
+interface CanvasPenDrag {
+  pointerId: number;
+  dispatchTarget: Element;
+  captureTarget: PointerCaptureElement;
+}
+
+interface CanvasPenContextMenuSuppression {
+  ownerDocument: Document;
+  expiresAt: number;
 }
 
 interface MarkdownDropTarget {
@@ -81,6 +99,10 @@ function isDocumentLike(value: unknown): value is Document {
 
 function isNodeLike(value: EventTarget | null): value is Node {
   return typeof value === "object" && value !== null && "nodeType" in value;
+}
+
+function isElementNode(value: Node): value is Element {
+  return value.nodeType === 1;
 }
 
 function documentFromWindowEvent(values: unknown[]): Document | null {
@@ -107,6 +129,9 @@ export class DragSessionManager extends Component implements DragStarter {
   private readonly documentComponents = new Map<Document, Component>();
   private session: DragSession | null = null;
   private pointerDrag: PointerDrag | null = null;
+  private canvasPenDrag: CanvasPenDrag | null = null;
+  private canvasPenContextMenuSuppression: CanvasPenContextMenuSuppression | null = null;
+  private readonly syntheticCanvasEvents = new WeakSet<Event>();
   private ghostElement: HTMLElement | null = null;
   private ghostComponent: Component | null = null;
   private pendingGhostSessionId: string | null = null;
@@ -390,8 +415,34 @@ export class DragSessionManager extends Component implements DragStarter {
       void this.handleDrop(event);
     }, true);
     component.registerDomEvent(document, "dragend", () => this.cleanupDrag(), true);
+    component.registerDomEvent(document, "pointerdown", (event) => {
+      this.handleCanvasPenPointerDown(event);
+    }, true);
+    component.registerDomEvent(document, "pointermove", (event) => {
+      this.handleCanvasPenPointerMove(event);
+    }, true);
+    component.registerDomEvent(document, "pointerup", (event) => {
+      this.handleCanvasPenPointerUp(event);
+    }, true);
+    component.registerDomEvent(document, "pointercancel", (event) => {
+      this.handleCanvasPenPointerCancel(event);
+    }, true);
+    component.registerDomEvent(document, "mousedown", (event) => {
+      this.handleCanvasPenMouseDown(event);
+    }, true);
+    component.registerDomEvent(document, "mousemove", (event) => {
+      this.handleCanvasPenMouseMove(event);
+    }, true);
+    component.registerDomEvent(document, "mouseup", (event) => {
+      this.handleCanvasPenMouseUp(event);
+    }, true);
+    component.registerDomEvent(document, "contextmenu", (event) => {
+      this.handleCanvasPenContextMenu(event);
+    }, true);
     component.registerDomEvent(document, "keydown", (event) => {
-      if (event.key === "Escape" && (this.session || this.pointerDrag)) this.cleanupDrag();
+      if (event.key === "Escape" && (this.session || this.pointerDrag || this.canvasPenDrag)) {
+        this.cleanupDrag();
+      }
     }, true);
     this.documentComponents.set(document, component);
   }
@@ -402,6 +453,257 @@ export class DragSessionManager extends Component implements DragStarter {
     component.unload();
     this.removeChild(component);
     this.documentComponents.delete(document);
+  }
+
+  private handleCanvasPenPointerDown(event: PointerEvent): void {
+    if (this.syntheticCanvasEvents.has(event)) return;
+    if (!this.host.config.surfacePenSideButtonDrag || !isSurfacePenSideButton(event)) return;
+    if (this.canvasPenDrag || this.pointerDrag) return;
+
+    const target = this.elementFromEventTarget(event.target);
+    if (!target || !this.isCanvasElement(target)) return;
+    if (!this.beginCanvasPenDrag(event, target)) return;
+
+    event.preventDefault();
+    event.stopImmediatePropagation();
+  }
+
+  private handleCanvasPenPointerMove(event: PointerEvent): void {
+    if (this.syntheticCanvasEvents.has(event)) return;
+
+    if (!this.canvasPenDrag) {
+      if (!this.host.config.surfacePenSideButtonDrag || !isSurfacePenSideButton(event)) return;
+      if (this.pointerDrag) return;
+      const target = this.elementFromEventTarget(event.target);
+      if (!target || !this.isCanvasElement(target)) return;
+      if (!this.beginCanvasPenDrag(event, target)) return;
+    }
+
+    const drag = this.canvasPenDrag;
+    if (
+      !drag ||
+      drag.pointerId !== event.pointerId ||
+      !this.isSameEventDocument(event, drag.dispatchTarget.ownerDocument)
+    ) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    this.dispatchCanvasPointerEvent("pointermove", event, drag.dispatchTarget, 1, 0);
+  }
+
+  private handleCanvasPenPointerUp(event: PointerEvent): void {
+    if (this.syntheticCanvasEvents.has(event)) return;
+    const drag = this.canvasPenDrag;
+    if (
+      !drag ||
+      drag.pointerId !== event.pointerId ||
+      !this.isSameEventDocument(event, drag.dispatchTarget.ownerDocument)
+    ) return;
+
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    this.dispatchCanvasPointerEvent("pointerup", event, drag.dispatchTarget, 0, 0);
+    this.canvasPenContextMenuSuppression = {
+      ownerDocument: drag.dispatchTarget.ownerDocument,
+      expiresAt: Date.now() + 1_000,
+    };
+    this.clearCanvasPenDrag();
+  }
+
+  private handleCanvasPenPointerCancel(event: PointerEvent): void {
+    if (this.syntheticCanvasEvents.has(event)) return;
+    const drag = this.canvasPenDrag;
+    if (
+      !drag ||
+      drag.pointerId !== event.pointerId ||
+      !this.isSameEventDocument(event, drag.dispatchTarget.ownerDocument)
+    ) return;
+
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    this.dispatchCanvasPointerEvent("pointercancel", event, drag.dispatchTarget, 0, 0);
+    this.clearCanvasPenDrag();
+  }
+
+  private handleCanvasPenMouseDown(event: MouseEvent): void {
+    if (this.syntheticCanvasEvents.has(event)) return;
+    const drag = this.canvasPenDrag;
+    if (!drag || event.button !== 2 || !this.isSameEventDocument(event, drag.dispatchTarget.ownerDocument)) {
+      return;
+    }
+    event.preventDefault();
+    event.stopImmediatePropagation();
+  }
+
+  private handleCanvasPenMouseMove(event: MouseEvent): void {
+    if (this.syntheticCanvasEvents.has(event)) return;
+    const drag = this.canvasPenDrag;
+    if (!drag || !this.isSameEventDocument(event, drag.dispatchTarget.ownerDocument)) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+  }
+
+  private handleCanvasPenMouseUp(event: MouseEvent): void {
+    if (this.syntheticCanvasEvents.has(event)) return;
+    const drag = this.canvasPenDrag;
+    if (!drag || !this.isSameEventDocument(event, drag.dispatchTarget.ownerDocument)) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+  }
+
+  private handleCanvasPenContextMenu(event: MouseEvent): void {
+    const dragDocument = this.canvasPenDrag?.dispatchTarget.ownerDocument;
+    const suppression = this.canvasPenContextMenuSuppression;
+    const ownerDocument = dragDocument ?? suppression?.ownerDocument;
+    if (
+      !ownerDocument ||
+      !this.isSameEventDocument(event, ownerDocument) ||
+      (suppression && suppression.expiresAt < Date.now())
+    ) {
+      if (suppression && suppression.expiresAt < Date.now()) {
+        this.canvasPenContextMenuSuppression = null;
+      }
+      return;
+    }
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    if (!dragDocument) this.canvasPenContextMenuSuppression = null;
+  }
+
+  private beginCanvasPenDrag(event: PointerEvent, dispatchTarget: Element): boolean {
+    const captureTarget = this.findPointerCaptureElement(dispatchTarget);
+    if (!captureTarget) return false;
+
+    this.canvasPenDrag = {
+      pointerId: event.pointerId,
+      dispatchTarget,
+      captureTarget,
+    };
+    try {
+      captureTarget.setPointerCapture(event.pointerId);
+    } catch {
+      this.canvasPenDrag = null;
+      return false;
+    }
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    this.dispatchCanvasPointerEvent("pointerdown", event, dispatchTarget, 1, 0);
+    return true;
+  }
+
+  private dispatchCanvasPointerEvent(
+    type: "pointerdown" | "pointermove" | "pointerup" | "pointercancel",
+    source: PointerEvent,
+    target: Element,
+    buttons: number,
+    button: number,
+  ): void {
+    const ownerWindow = target.ownerDocument.defaultView;
+    if (!ownerWindow) return;
+
+    if (typeof ownerWindow.PointerEvent === "function") {
+      const synthetic = new ownerWindow.PointerEvent(type, {
+        bubbles: true,
+        cancelable: true,
+        composed: true,
+        pointerId: source.pointerId,
+        pointerType: "mouse",
+        isPrimary: true,
+        button,
+        buttons,
+        clientX: source.clientX,
+        clientY: source.clientY,
+        screenX: source.screenX,
+        screenY: source.screenY,
+        ctrlKey: source.ctrlKey,
+        shiftKey: source.shiftKey,
+        altKey: source.altKey,
+        metaKey: source.metaKey,
+      });
+      this.syntheticCanvasEvents.add(synthetic);
+      target.dispatchEvent(synthetic);
+    }
+
+    const mouseType = type === "pointerdown"
+      ? "mousedown"
+      : type === "pointermove"
+        ? "mousemove"
+        : type === "pointerup"
+          ? "mouseup"
+          : null;
+    if (!mouseType) return;
+    const syntheticMouse = new ownerWindow.MouseEvent(mouseType, {
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+      button,
+      buttons,
+      clientX: source.clientX,
+      clientY: source.clientY,
+      screenX: source.screenX,
+      screenY: source.screenY,
+      ctrlKey: source.ctrlKey,
+      shiftKey: source.shiftKey,
+      altKey: source.altKey,
+      metaKey: source.metaKey,
+    });
+    this.syntheticCanvasEvents.add(syntheticMouse);
+    target.dispatchEvent(syntheticMouse);
+  }
+
+  private isSameEventDocument(event: Event, ownerDocument: Document): boolean {
+    const target = isNodeLike(event.target) ? event.target : null;
+    if (target) return target.ownerDocument === ownerDocument;
+    return event.currentTarget === ownerDocument;
+  }
+
+  private clearCanvasPenDrag(): void {
+    const drag = this.canvasPenDrag;
+    if (!drag) return;
+    try {
+      if (drag.captureTarget.hasPointerCapture(drag.pointerId)) {
+        drag.captureTarget.releasePointerCapture(drag.pointerId);
+      }
+    } catch {
+      // The Canvas document may already be closing.
+    }
+    this.canvasPenDrag = null;
+  }
+
+  private elementFromEventTarget(target: EventTarget | null): Element | null {
+    if (!isNodeLike(target)) return null;
+    return isElementNode(target) ? target : target.parentElement;
+  }
+
+  private isCanvasElement(element: Element): boolean {
+    let result = false;
+    this.host.app.workspace.iterateAllLeaves((leaf: WorkspaceLeaf) => {
+      if (result || !isCanvasView(leaf.view)) return;
+      const view = leaf.view;
+      if (
+        view.containerEl.ownerDocument === element.ownerDocument &&
+        view.containerEl.isConnected &&
+        view.containerEl.contains(element)
+      ) {
+        result = true;
+      }
+    });
+    return result;
+  }
+
+  private findPointerCaptureElement(element: Element): PointerCaptureElement | null {
+    let current: Element | null = element;
+    while (current) {
+      const candidate = current as unknown as Partial<PointerCaptureElement>;
+      if (
+        typeof candidate.setPointerCapture === "function" &&
+        typeof candidate.releasePointerCapture === "function" &&
+        typeof candidate.hasPointerCapture === "function"
+      ) {
+        return current;
+      }
+      current = current.parentElement;
+    }
+    return null;
   }
 
   private handleDragOver(event: DragEvent): void {
@@ -902,6 +1204,8 @@ export class DragSessionManager extends Component implements DragStarter {
     this.clearMarkdownDropTarget();
     this.removeGhost();
     this.session = null;
+    this.clearCanvasPenDrag();
+    this.canvasPenContextMenuSuppression = null;
     if (this.pointerDrag) this.releasePointerCapture(this.pointerDrag);
     this.pointerDrag = null;
   }

@@ -77,7 +77,7 @@
 - [x] 增加 Canvas 浮动工具栏“归纳为原子笔记”按钮、命令面板兜底、选区排序和新节点创建
 - [x] 补 Canvas 归纳测试、更新 README，并准备 Obsidian 实机验证步骤
 - [x] 将设置页修饰键 UI 改为“按动作选择修饰键”，保留旧 `canvasBindings` / `markdownBindings` 存储并自动处理组合冲突
-- [x] 增加 Surface Pen 侧键拖拽开关，使用 `pen + buttons&2` 进入现有 Pointer capture 拖拽链路
+- [x] 增加 Surface Pen 侧键拖拽开关，使用 `pen + buttons&2` 进入 Markdown 与 Canvas 的 Pointer capture 拖拽链路；Canvas 同时桥接左键 Pointer/Mouse 事件并抑制原始右键事件
 - [ ] 完成设置页与 Surface Pen 侧键的 Obsidian 实机验证
 - **状态：** in_progress
 

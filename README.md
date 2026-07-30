@@ -53,7 +53,7 @@ rank:
 
 On a Surface, touch or pen drag starts from the block handle after moving at least 8 px. A tap on the handle selects the complete block. Touch and pen use the separate **Touch drop action** setting, which defaults to linking the source block; a keyboard modifier at drop time uses the normal Canvas modifier mapping instead.
 
-When **Surface Pen side-button drag** is enabled, pressing the pen's side button on a Markdown handle starts the same captured drag path as a left-button drag and uses the no-modifier Canvas action. The check is limited to pen pointer events on the handle, so it does not change ordinary desktop right-click behavior.
+When **Surface Pen side-button drag** is enabled, pressing the pen's side button on a Markdown handle starts the same captured drag path as a left-button drag and uses the no-modifier Canvas action. On Canvas itself, the plugin translates the pen side-button pointer and mouse sequence into a captured left-button sequence so cards and the Canvas surface receive the same input as a left-button drag. The check is limited to `pen` events with `buttons & 2`, so ordinary desktop right-click behavior is unchanged.
 
 Touch and pen drops support a Canvas in the same Obsidian window. Mouse dragging continues to support Canvas popout windows. The larger touch handle is enabled only for coarse-pointer environments, so normal editor scrolling and text selection remain unchanged outside the handle.
 
@@ -144,7 +144,7 @@ Canvas and Markdown actions use separate modifier mappings. Choose a modifier fr
 - Touch and pen require the Canvas private APIs used for coordinate lookup and node creation. If those APIs are unavailable, DragDrop cancels the drop before changing the Markdown source.
 - The drop target and node creation flow use Obsidian's private Canvas API, so Obsidian updates may require compatibility changes.
 - The floating toolbar button uses private `.canvas-menu` DOM observation. If that toolbar changes, the command palette fallback remains available and the rest of the plugin continues to work.
-- Surface Pen side-button drag uses Pointer Events and `setPointerCapture()` only on the Markdown handle. Disable it in settings if the pen side button should keep its normal context-menu behavior there.
+- Surface Pen side-button drag uses Pointer Events and `setPointerCapture()` on Markdown handles and Canvas elements in the current Obsidian window. Disable it in settings if the pen side button should keep its normal context-menu behavior.
 - The manifest currently declares Obsidian 1.5.11 as the minimum version. Development uses the Obsidian 1.13.1 type surface; verify older desktop versions before relying on them.
 - Markdown → Markdown dragging is supported only between Markdown editors; it does not restructure list indentation or outline hierarchy.
 - Canvas height fitting is best effort. If measurement fails, the configured initial height is kept.

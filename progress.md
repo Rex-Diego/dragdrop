@@ -307,3 +307,12 @@
 - 新增设置映射与 Surface Pen 判断测试；当前 `npm.cmd run lint`、`npm.cmd run typecheck` 通过，`npm.cmd run test` 为 9 files / 61 tests 通过。
 - 已完成 `npm.cmd run build` 与 `node --check main.js`；六个发布文件已部署到 `.obsidian/plugins/dragdrop` 和 `plugins-dev/plugin`，三方 SHA-256 一致，`main.js` 为 101,808 bytes。
 - 后续改动已提交为 `07efdab`（`feat: simplify action settings and support Surface Pen drag`）并推送到 `origin/master`；待用户在 Obsidian 设置页和 Surface Pen 上做实机验证。
+
+## 会话：2026-07-30（Surface Pen Canvas 原生交互桥）
+
+- 用户确认：Surface Pen 从 Markdown 抓手拖到 Canvas 可以工作，但在 Canvas 卡片或空白区域按侧键拖动仍显示右键标识，既不能移动卡片也不能拖动画布。
+- 静态检查本机 Obsidian 核心源码后确认 Canvas 的 Pixi pointerdown 只接受 `pointerType="mouse"`、`isPrimary=true`、`button=0`；原始笔副按钮是 `button=2`，会进入右键路径。仅处理 Markdown 抓手不足以覆盖 Canvas 原生事件。
+- 在 `drag-session-manager.ts` 增加按 owner document 注册的 Canvas 侧键事件桥：捕获 `pointerdown/move/up/cancel` 与 `mousedown/move/up/contextmenu`，用 `setPointerCapture()` 保持会话，向同一 Canvas target 派发左键 Pointer/Mouse 序列，并在释放后的短窗口拦截 contextmenu；普通鼠标右键不受影响。
+- 另外补上 `cleanupDrag()` 的 Canvas capture 和状态清理，避免插件卸载、窗口关闭或其他拖拽启动后残留输入捕获。
+- 本轮首次检查遇到 `pointermove` 的可空状态收窄和两个无效 DOM 类型断言；改用局部状态、元素节点收窄后已解决。当前 `npm.cmd run lint`、`npm.cmd run typecheck`、`npm.cmd run test` 全部通过，测试为 9 files / 61 tests。
+- 已完成生产构建、`node --check main.js`、两个发布目录部署与六个发布文件三方 SHA-256 核对；`main.js` 当前为 110,563 bytes。之后需要用户重载 Obsidian，分别验证 Canvas 卡片拖动、空白画布拖动和右键圆圈消失。

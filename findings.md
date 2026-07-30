@@ -253,5 +253,7 @@
 
 - 修饰键设置页改为按动作列出下拉框：Canvas 显示 `Link to source block`、`Create note`、`Do nothing`，Markdown 显示 `Insert source embed`、`Move content`、`Do nothing`；每个动作选择一个修饰键，`Not assigned` 表示继承/未绑定。
 - 底层 `canvasBindings` / `markdownBindings` 数据结构保持不变，旧配置无需迁移；当两个动作选择同一个组合时，后选择的动作占用该组合，之前的动作自动恢复为 `inherit`。
-- 新增 `surfacePenSideButtonDrag`，默认开启。只有 Markdown 抓手收到 `pointerType === "pen" && (buttons & 2) !== 0` 时才将 Surface Pen 侧键视为左键拖拽；该输入使用 Canvas 的 no-modifier 动作，不走 Touch drop action。生命周期复用现有 `setPointerCapture()`、`pointerup`、`pointercancel` 路径，不监听或修改桌面普通右键。
-- 当前静态验证：`npm.cmd run lint` 0 errors / 0 warnings，`npm.cmd run typecheck` 通过，`npm.cmd run test` 为 9 files / 61 tests 通过；生产构建、部署和三方 SHA-256 核对已完成，待实机验证。
+- 新增 `surfacePenSideButtonDrag`，默认开启。Markdown 抓手收到 `pointerType === "pen" && (buttons & 2) !== 0` 时仍复用原有 Pointer capture 拖拽；Canvas 原生交互也需要同一输入转换，否则 Canvas 会按右键处理。
+- 已检查本机 Obsidian 核心 `obsidian.asar`：Canvas 的 Pixi 入口严格要求 `isPrimary=true`、`button=0`、`pointerType="mouse"`，而空白画布的右键路径明确按 `button=2` 处理。由此锁定 Canvas 侧采用捕获阶段事件桥：阻止原始 pen 副按钮事件，向原始 Canvas target 派发完整的左键 PointerEvent 与 MouseEvent 序列，并在释放后的短窗口抑制 contextmenu；普通鼠标右键不满足 `pointerType="pen"`，不会进入该路径。
+- Canvas 桥的 Pointer capture、原始 `mousedown/mousemove/mouseup` 拦截、释放后的 contextmenu 抑制和插件卸载清理均已实现。初次补丁的空值收窄与无效类型断言已修复。
+- 当前静态验证：`npm.cmd run lint` 0 errors / 0 warnings，`npm.cmd run typecheck` 通过，`npm.cmd run test` 为 9 files / 61 tests 通过；生产构建、`node --check`、两个发布目录部署和六个文件三方 SHA-256 已完成，Surface 实机验证仍待用户重载后执行。
