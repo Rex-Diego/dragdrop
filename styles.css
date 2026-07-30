@@ -7,6 +7,27 @@
   cursor: grab;
 }
 
+.markdown-source-view.mod-cm6 .dragdrop-gutter {
+  min-width: calc(var(--icon-size) + var(--size-4-2));
+  overflow: visible;
+}
+
+.markdown-source-view.mod-cm6 .dragdrop-gutter-marker {
+  display: inline-flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+  width: 100%;
+  overflow: visible;
+}
+
+.markdown-source-view.mod-cm6 .dragdrop-gutter .dragdrop-handle {
+  display: inline-flex;
+  align-items: flex-start;
+  justify-content: center;
+  width: var(--icon-size);
+  height: var(--icon-size);
+}
+
 .markdown-source-view.mod-cm6 .dragdrop-handle-icon {
   position: absolute;
   inset-block-start: 0;
@@ -23,7 +44,15 @@
   transition: opacity 80ms ease-in-out, color 80ms ease-in-out;
 }
 
+.markdown-source-view.mod-cm6 .dragdrop-gutter .dragdrop-handle-icon {
+  position: static;
+  inset: auto;
+  opacity: 0;
+}
+
 .markdown-source-view.mod-cm6 .cm-line:hover > .dragdrop-handle .dragdrop-handle-icon,
+.markdown-source-view.mod-cm6 .dragdrop-gutter .cm-gutterElement:hover .dragdrop-handle-icon,
+.markdown-source-view.mod-cm6 .dragdrop-gutter .dragdrop-handle-line-hover .dragdrop-handle-icon,
 .markdown-source-view.mod-cm6 .dragdrop-handle:hover .dragdrop-handle-icon,
 .markdown-source-view.mod-cm6 .dragdrop-handle:focus-visible .dragdrop-handle-icon {
   opacity: 1;
@@ -38,6 +67,15 @@
     width: 44px;
     height: 44px;
     opacity: 1;
+  }
+
+  .markdown-source-view.mod-cm6 .dragdrop-gutter {
+    min-width: 44px;
+  }
+
+  .markdown-source-view.mod-cm6 .dragdrop-gutter .dragdrop-handle {
+    width: 44px;
+    height: 44px;
   }
 }
 
@@ -99,6 +137,19 @@
   height: 1px;
   pointer-events: none;
   opacity: 0;
+}
+
+.dragdrop-markdown-drop-line {
+  position: fixed;
+  inset-block-start: 0;
+  inset-inline-start: 0;
+  z-index: var(--layer-popover);
+  height: 3px;
+  pointer-events: none;
+  background: var(--interactive-accent);
+  border-radius: var(--radius-s);
+  transform: translate(0, 0);
+  display: block;
 }
 
 .modal.dragdrop-file-name-modal .dragdrop-validation {

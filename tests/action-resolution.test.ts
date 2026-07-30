@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   resolveCanvasDropAction,
+  resolveMarkdownDropAction,
   type ModifierKeyState,
   type ResolvedCanvasDropAction,
 } from "../src/action-resolution";
@@ -104,6 +105,14 @@ describe("settings merging", () => {
     expect(merged.touchDropAction).toBe("link-source");
   });
 
+  it("drops the removed protected-folder setting from legacy data", () => {
+    const merged = mergeSettings({
+      protectedFolders: ["Capture"],
+    } as unknown as Partial<typeof DEFAULT_SETTINGS>);
+
+    expect(Object.hasOwn(merged, "protectedFolders")).toBe(false);
+  });
+
   it("fills nested binding defaults without mutating defaults or loaded data", () => {
     const defaultsSnapshot = {
       ...DEFAULT_SETTINGS,
@@ -151,8 +160,54 @@ describe("settings merging", () => {
     merged.canvasBindings.none = "none";
     merged.markdownBindings.none = "none";
     expect(DEFAULT_SETTINGS.canvasBindings.none).toBe("link-source");
-    expect(DEFAULT_SETTINGS.markdownBindings.none).toBe("move");
+    expect(DEFAULT_SETTINGS.markdownBindings.none).toBe("embed-source");
     expect(loaded.canvasBindings.none).toBe("link-source");
-    expect(loaded.markdownBindings.none).toBe("move");
+    expect(loaded.markdownBindings.none).toBe("embed-source");
+  });
+});
+
+describe("Markdown action resolution", () => {
+  it("uses the non-destructive defaults and inherits from none", () => {
+    expect(
+      resolveMarkdownDropAction(
+        { ctrlKey: false, metaKey: false, shiftKey: false, altKey: false },
+        DEFAULT_SETTINGS.markdownBindings,
+      ),
+    ).toBe("embed-source");
+    expect(
+      resolveMarkdownDropAction(
+        { ctrlKey: true, metaKey: false, shiftKey: false, altKey: false },
+        DEFAULT_SETTINGS.markdownBindings,
+      ),
+    ).toBe("move");
+    expect(
+      resolveMarkdownDropAction(
+        { ctrlKey: false, metaKey: false, shiftKey: true, altKey: false },
+        DEFAULT_SETTINGS.markdownBindings,
+      ),
+    ).toBe("embed-source");
+  });
+
+  it("falls back to embed when saved Markdown bindings are invalid", () => {
+    expect(
+      resolveMarkdownDropAction(
+        { ctrlKey: true, metaKey: false, shiftKey: false, altKey: false },
+        { none: "inherit", primary: "link-source" },
+      ),
+    ).toBe("embed-source");
+  });
+
+  it("migrates the unused legacy Markdown defaults", () => {
+    const merged = mergeSettings({
+      markdownBindings: {
+        none: "move",
+        primary: "link-source",
+        "primary+shift": "embed-source",
+      } as unknown as typeof DEFAULT_SETTINGS.markdownBindings,
+    });
+
+    expect(merged.markdownBindings.none).toBe("embed-source");
+    expect(merged.markdownBindings.primary).toBe("move");
+    expect(merged.markdownBindings["primary+shift"]).toBe("inherit");
   });
 });

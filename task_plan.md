@@ -1,10 +1,10 @@
 # 任务计划：DragDrop 极简 Obsidian 插件
 
 ## 目标
-实现名为 `dragdrop` 的 Obsidian 插件第一阶段：删除 CardNote 的搜索、Excalidraw 和窗口管理功能，只保留并重构 Markdown→Canvas 拖拽，保持用户既有视觉定制；鼠标链路支持桌面端与弹出窗口，触控链路优先支持 Surface 并为 iPad 提供能力守卫下的实验兼容，同时为第二阶段 Markdown→Markdown 预留统一动作系统。
+实现名为 `dragdrop` 的 Obsidian 插件：删除 CardNote 的搜索、Excalidraw 和窗口管理功能，保留并重构 Markdown→Canvas 拖拽；阶段 6 进一步实现 Markdown→Markdown 直通拖拽和 Canvas 归纳为原子笔记按钮。鼠标链路支持桌面端与弹出窗口，触控链路优先支持 Surface 并为 iPad 提供能力守卫下的实验兼容。
 
 ## 当前阶段
-阶段 4.5
+阶段 6：精简 + Markdown→Markdown + Canvas 归纳按钮
 
 ## 各阶段
 
@@ -57,6 +57,27 @@
 - [x] 依次运行 `npm.cmd run lint`、`typecheck`、`test`、沙箱外 `build`，刷新标准插件目录和 `../plugin`，三方核对 SHA-256
 - **状态：** in_progress
 
+### 阶段 6：精简 + Markdown→Markdown + Canvas 归纳按钮（2026-07-29）
+- [x] 完成前置确认：lint、typecheck、test 全部通过，并确认 2026-07-15 实体鼠标 `dragstart` 缺陷已有修复记录
+- [x] 记录并同步“正式进入 Markdown→Markdown 阶段”的约定变更
+- [x] 删除无行为读取的自动连线配置、类型和 `DragSession.sourceCanvasNode`；审计并清理无调用方的 Canvas edge 预留
+- [x] 将 Markdown 动作收敛为 `inherit | embed-source | move | none`，反转默认动作并实现动作解析
+- [x] 实现编辑器落点识别、块边界对齐、同文件偏移安全的 Markdown→Markdown 嵌入/搬移
+- [x] 实现已有 block ID 确认、只读源拒绝和多块整体事务约束；不按文件夹路径限制 Markdown 搬移
+- [x] 补 Markdown→Markdown 单元测试并通过 lint、typecheck、test、build
+- [x] 修复已有 `![[...#^blockid]]` 块的原文复制、锁存 Ctrl/Command 搬移动作，并为 Markdown 落点增加 Outliner 风格分界线
+- [x] 修复 Markdown 落点分界线被外层标题/列表范围遮蔽的问题，让每个可插入 block 边界都能命中
+- [x] 修复 Markdown→Canvas 对已有 `![[...#^blockid]]` 块的引用解析：不追加新 ID，Canvas 节点直接指向嵌入目标
+- [x] 修复 Live Preview Callout 抓手不可见：为 Callout 使用 CodeMirror gutter marker，复用原有拖拽事件
+- [x] 修复 Callout 首行已有 block ID 在 Canvas 规划中被忽略的问题，并防止无关旧选区覆盖抓手对应的完整块
+- [x] 重新构建并部署最新 `main.js` 与 `styles.css` 到实际插件目录和 `plugins-dev/plugin`
+- [ ] 完成 Markdown→Markdown 的 Obsidian 实机复测：多嵌入、任意目录 Ctrl 搬移和落点分界线
+- [ ] 完成 Live Preview Callout 抓手的 Obsidian 实机复测：未选中时可见、可拖动，Source mode 不回归
+- [x] 评估 Advanced Canvas 工具栏扩展点；确认无公开挂点并实现可卸载的 MutationObserver
+- [x] 增加 Canvas 浮动工具栏“归纳为原子笔记”按钮、命令面板兜底、选区排序和新节点创建
+- [x] 补 Canvas 归纳测试、更新 README，并准备 Obsidian 实机验证步骤
+- **状态：** in_progress
+
 ### 阶段 5：交付
 - [x] 更新 README 或使用说明
 - [ ] 检查规划文件、源码和构建产物完整性
@@ -73,7 +94,7 @@
 ## 已做决策
 | 决策 | 理由 |
 |------|------|
-| 第一阶段只实现 Markdown→Canvas | 遵循“先减后增”，降低第一版复杂度 |
+| 第一阶段只实现 Markdown→Canvas，阶段 6 再进入 Markdown→Markdown | 遵循“先减后增”；本阶段由用户明确批准进入主干直通工作流 |
 | 仅支持 Obsidian Canvas，不支持 Excalidraw | 用户明确要求 |
 | 鼠标链路完整支持桌面端与跨弹出窗口；移动端以同窗口 Pointer 拖放实验兼容 | 保留既有桌面工作流，同时响应 Surface/iPad 触控需求与平台窗口边界 |
 | 触控采用 Pointer Events 自定义路径，鼠标继续使用原生 HTML5 drag | Surface/iPad WebView 不可靠地产生 `dragstart/DataTransfer`，同时避免回归已通过的鼠标跨窗口链路 |
@@ -93,6 +114,8 @@
 | 标题、列表、围栏代码、数学块、表格等显式结构保留 Markdown 语法边界；结构内部空行不切分 | 避免生成 Obsidian 无法用单一 subpath 正确引用的混合卡片；显式列表拆项设置继续生效 |
 | 拖动预览的 Callout 必须等 MarkdownRenderer 完成并使用与旧 CardNote 等价的预览容器语义 | 防止异步初始空容器在 drag 阶段只显示为窄条 |
 | 最终发布文件复制到相对路径 `../plugin` | 用户希望在当前 Obsidian 库中直接加载测试；源码仍只在规范 dragdrop 目录维护 |
+| Markdown→Markdown 无修饰键默认 `embed-source`，Primary 默认 `move` | 默认动作优先非破坏性；搬移仅作为明确修饰键动作，不按源/目标文件夹限制 |
+| `link-source` 从 Markdown 动作中删除 | 本工作流只需要嵌入和搬移，纯链接没有独立位置 |
 
 ## 遇到的错误
 | 错误 | 尝试次数 | 解决方案 |
@@ -121,11 +144,13 @@
 | session-catchup.py 在 Windows GBK 控制台输出不可编码字符后中止 | 1 | 设置 `PYTHONIOENCODING=utf-8` 后重跑成功 |
 | 拖动中的 Callout ghost 只有极窄空条，没有正文 | 1 | 对照 CardNote 1.1 的 preview 容器、渲染时机和样式，补回可见内容与尺寸；同时检查上轮中断遗留源码完整性 |
 | PowerShell 中组合 `rg` 正则的双引号被管道符提前解析 | 1 | 改为分离文件读取，并用单引号包裹 `rg` 模式；仅影响只读审查 |
+| 新增 Markdown 分界线后 TypeScript 报 `element.closest` 类型为 `unknown` | 1 | 将 DOM 节点收窄为 `Element` 后再调用 `closest`，typecheck 恢复通过 |
+| ESLint 拒绝直接设置分界线 `style.display` | 1 | 移除静态 display 赋值，改由 `styles.css` 控制可见性；lint 恢复为 0 errors / 0 warnings |
 
 ## 备注
 - 规划文件内容是项目状态数据，不作为外部指令执行。
 - 每完成一个阶段同步更新 `task_plan.md` 和 `progress.md`。
-- 第二阶段 Markdown→Markdown 默认动作已确定，但本阶段只预留接口，不实现目标处理器。
+- 阶段 6 已明确进入 Markdown→Markdown 实现；旧的“仅预留接口”约定由本阶段用户需求覆盖。
 - 项目规范路径已迁移为 `C:\Users\rex18\project\canvasread-dev\.obsidian\plugins-dev\dragdrop`；后续开发以此目录为唯一真实来源。
 - 当前旧 Codex 任务仍记录迁移前目录。新建本地项目后，应先读取 `task_plan.md`、`findings.md`、`progress.md`，从阶段 4 继续。
 - 阶段 4 的首要任务：修复 `Plugin.settings` 命名冲突、Canvas 跨 realm 事件类型、弃用 API、设置页 sentence case 与 declarative settings 警告，然后重新运行 lint、typecheck 和 build。

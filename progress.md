@@ -207,6 +207,9 @@
 | 2026-07-19 | 新增 Callout lazy-continuation 回归后，定向 Vitest 显示 2 handles 而非 1 | 1 | 失败用例已稳定捕获真实缺陷；下一步实现顶层空行外层分组并重新运行 |
 | 2026-07-19 | 生产 build 在沙箱内无法读取 Vault 祖先目录并解析 main.ts | 1 | 与既有环境限制一致；保留正确构建配置并请求沙箱外运行 |
 | 2026-07-20 | PowerShell 组合只读审查命令中的 `rg` 双引号/管道符被提前解析 | 1 | 分离读取命令并使用单引号正则，完成移动端依赖审查 |
+| 2026-07-29 | 并行部署审计包含不存在的路径，PowerShell/rg 批处理提前退出 | 1 | 改用 `Test-Path` 过滤存在路径后重新核对 |
+| 2026-07-29 | Obsidian 实际加载目录仍为旧 64,006-byte bundle，导致 Markdown drop 表现为复制 | 1 | 重新生产构建并部署新 `main.js`，规范产物、实际插件目录和核对目录 SHA-256 一致 |
+| 2026-07-29 | Canvas 引用规划回归初次将 linkpath `Books/Source` 与夹具的 `Books/Source.md` 直接比较，误判目标缺失 | 1 | 按 Obsidian `getFirstLinkpathDest()` 的 linkpath 语义修正夹具；同时将规划文件改为泛型文件接口，避免测试伪造 `TFile` 类型断言 |
 
 ## 五问重启检查
 | 问题 | 答案 |
@@ -217,5 +220,81 @@
 | 我学到了什么？ | 见 findings.md，尤其是“项目迁移与会话交接”及 Canvas 私有 API 决策 |
 | 我做了什么？ | 已完成需求研究、项目结构和第一阶段核心实现；typecheck/build 已通过，lint 与测试待完成 |
 
+## 会话：2026-07-29
+
+### 阶段 6：精简 + Markdown→Markdown + Canvas 归纳按钮
+- **状态：** in_progress
+- 前置基线：`npm.cmd run lint` 通过（0 errors / 0 warnings），`npm.cmd run typecheck` 通过，`npm.cmd run test` 通过（5 files / 38 tests）。
+- 已核对 2026-07-15 的实体鼠标拖拽记录：初始 `dragstart` 缺陷后来通过 `DragHandleWidget.ignoreEvent=true` 修复，并由实体拖放成功生成 `^71cd6a` 与 Canvas file node 的落盘结果确认，不再阻塞本阶段。
+- 已按用户确认将 Markdown→Markdown 从“仅预留接口”提升为阶段 6 的正式实现范围；下一步先完成死配置精简和 Markdown→Markdown，再处理 Canvas 工具栏私有 API。
+- 首次跨文件规划补丁因 `findings.md` 尾部标题上下文不匹配而未应用；改为逐文件精确补丁后继续，未造成源码或规划内容的部分写入。
+- 已完成死配置精简：移除 `autoLink`、`arrowTo`、`defaultLinkLabel`、`ArrowDirection`、`DragSession.sourceCanvasNode` 及无调用方的 Canvas edge 类型；`defaultFolder` 改为 `Distill`。
+- 已完成 Markdown 动作模型与管理器接入：`resolveMarkdownDropAction` 默认安全回退为 `embed-source`，编辑器目标在 Canvas 目标之后识别，支持块边界插入、同文件 offset 安全搬移、已有 ID 确认、只读拒绝和跨文件回滚。
+- 当前聚焦验证为 6 files / 44 tests，`npm.cmd run lint` 与 `npm.cmd run typecheck` 通过；待继续补管理器可观测测试、Canvas 归纳按钮和 README。
+- Markdown→Markdown 中间交付完成：README 已更新，生产构建成功；当前源码阶段停在 Canvas 私有工具栏评估之前，未修改 Canvas 原型、DOM 工具栏或命令入口。
+- 用户反馈实际 Markdown 拖拽仍是复制；运行时审计发现 Obsidian 加载目录仍为旧 64,006-byte bundle，未包含当前 Markdown 分支。已重新构建并部署 79,767-byte `main.js` 到 `.obsidian/plugins/dragdrop` 与 `plugins-dev/plugin`，三方 SHA-256 一致。
+- 部署后的当前验证基线为 lint 0 errors / 0 warnings、typecheck 通过、6 files / 46 tests 通过、生产 build 通过；等待用户重载 Obsidian 后验证无修饰键多嵌入和 Ctrl/Command 剪贴。
+- 用户反馈指出两项运行时缺陷：完整 `![[...#^blockid]]` 源块应复制原文，且 Ctrl/Command 搬移在 `drop` 中仍表现为复制；同时要求编辑器落点显示 Outliner 风格分界线。
+- 修复已完成：Markdown 复制路径识别完整块嵌入并原样写入，每个拖动单元仍独立生成一个目标内容；`dragover` 锁存 Markdown 动作并在 `drop` 修饰键丢失时复用；新增实时更新、清理完整的编辑器落点分界线。
+- 本轮首次 typecheck 因 `element.closest` 的结构类型为 `unknown` 失败，收窄为 `Element` 后通过；随后 ESLint 因直接设置 `style.display` 失败，改由 CSS 控制可见性后通过。
+- 最新验证：`npm.cmd run lint` 0 errors / 0 warnings、`npm.cmd run typecheck` 通过、`npm.cmd run test` 6 files / 47 tests 通过、`npm.cmd run build` 通过、`node --check main.js` 通过。最新 bundle 已部署至 `.obsidian/plugins/dragdrop` 和 `plugins-dev/plugin`，`main.js`/`styles.css` 源码与两个目录三方 SHA-256 一致，等待用户重载 Obsidian 后实机复测。
+- 用户复测时看到 `The source note is protected`。已核对 `references/Outliner.MD` 源码：其拖拽实现没有 Ctrl 分支或保护目录，默认就是移动；用户随后明确要求取消文件夹限制。本轮删除路径保护设置和拦截分支，保留 block ID 确认、只读检查与整体事务保护。
+- 已按用户决定取消文件夹限制：删除 `protectedFolders` 的设置声明、设置页 UI、默认值、合并分支和 `protectMoveAction`；旧设置数据加载时会丢弃该历史字段，Ctrl/Command 从任意文件夹都进入 `move`。
+- 变更后验证：`npm.cmd run lint` 0 errors / 0 warnings、`npm.cmd run typecheck` 通过、`npm.cmd run test` 6 files / 47 tests 通过、`npm.cmd run build` 和 `node --check main.js` 通过。81,470-byte `main.js` 与 `styles.css` 已重新部署到 `.obsidian/plugins/dragdrop` 和 `plugins-dev/plugin`，三方哈希一致，等待 Obsidian 重载后复测 Capture → 任意笔记的 Ctrl 搬移。
+- 用户报告 Markdown→Canvas 对已有 `![[...#^blockid]]` 会再次追加 ID并错误指向源文件。本轮新增 `canvas-reference.ts`：解析独立块嵌入的 linktext，解析目标 TFile 和原始 subpath；Canvas 链接与创建原子笔记均复用该引用，普通块仍使用原有 ID 规划。
+- 新增 Canvas 引用规划回归覆盖：目标文件/原始 `#^id`、混合普通块与已有嵌入、目标缺失时整体中止；`directBlockEmbedLinktext` 覆盖 alias 去除。当前 lint 0 errors / 0 warnings、typecheck 通过、7 files / 50 tests 通过，待生产构建、部署和最终哈希核对。
+- 正式构建与 `node --check main.js` 通过；`main.js` 为 83,722 bytes。`manifest.json`、`main.js`、`styles.css`、`README.md`、`LICENSE`、`versions.json` 已同步到 `.obsidian/plugins/dragdrop` 和 `plugins-dev/plugin`，三处六文件 SHA-256 全部一致。
+- 用户反馈 Markdown→Markdown 分界线在外层标题/列表范围内过于稀疏。本轮改为收集所有嵌套 block 起止边界并按鼠标纵向距离选最近位置；新增边界全集与最近位置测试。当前 lint 0 errors / 0 warnings、typecheck 通过、7 files / 52 tests 通过，待 build 和部署。
+- 生产 build 与 `node --check main.js` 通过；最新六个发布文件已同步到 `.obsidian/plugins/dragdrop` 和 `plugins-dev/plugin`，三方 SHA-256 全部一致。分界线修复已部署，等待 Obsidian 重载后的实体拖拽复测。
+
 ---
 *每个阶段完成后或遇到错误时更新此文件*
+
+## 会话：2026-07-29（Live Preview Callout 抓手）
+
+- 用户报告 Live Preview/preview mode 的 Callout 看不到拖动抓手，只有点击整块选中或切换 Source mode 后才出现。
+- 实机 DOM 检查确认 Callout 使用独立的 `.cm-embed-block.cm-callout` 渲染，现有 inline decoration 抓手位于源 `.cm-line`，在渲染状态下不稳定可见。
+- 修复 `src/drag-handle-extension.ts`：Callout 不再生成 inline decoration，改用 CodeMirror `GutterMarker`；gutter marker 与原手柄共享 `dragstart`、Pointer Events、键盘选择和 ARIA 属性。
+- 修复 `styles.css`：新增 `dragdrop-gutter`/`dragdrop-gutter-marker` 布局，Callout gutter 抓手稳定可见，并保留粗指针 44px 命中区。
+- typecheck 首次因自定义 `GutterMarker` 字段名 `range` 与基类私有字段冲突失败；改名为 `handleRange` 后恢复通过。
+- 最终验证通过：`npm.cmd run lint`（0 errors / 0 warnings）、`npm.cmd run typecheck`、`npm.cmd run test`（7 files / 52 tests）、`npm.cmd run build`、`node --check main.js`。
+- 最新六个发布文件已部署到 `.obsidian/plugins/dragdrop` 与 `plugins-dev/plugin`；规范源码、标准插件目录和交付目录三方 SHA-256 一致。
+- 部署后自动化重载停在图片预览窗口，未能完成最后一次视觉/拖动操作；需要用户按下 `Ctrl+R` 后在 Live Preview 中复测 Callout 抓手。
+
+## 会话：2026-07-29（继续阶段 6：Canvas 归纳按钮）
+
+- 已重新读取 `task_plan.md`、`findings.md`、`progress.md`，并完整读取 `planning-with-files-zh` 与仓库内 Obsidian 插件开发技能及本次涉及的生命周期、类型安全、文件操作、UI/可访问性、CSS 和代码质量 reference。
+- 检查了 vault 中 Advanced Canvas 6.0.1 的实际 `main.js`。可见 `advanced-canvas:selection-changed`、`advanced-canvas:canvas-changed` 等事件，但没有发现浮动 `.canvas-menu` 工具栏扩展点；`popup-menu-created` 不符合入口要求。
+- 已锁定使用按 workspace document 管理的 MutationObserver 注入 `.canvas-menu` 按钮，并提供命令面板兜底；下一步实现按钮行为、命名和新 Canvas 节点创建。
+- 已实现 Canvas 归纳 feature：选区按 y/x 排序，file 节点复用 `filePath`/`subpath`，text 节点原样写入；命名通过 `FileNameModal` + `planFileNames`，中性占位且不可跳过；正文写入 `up/topics/tags/rank` 四个空属性；创建后新增并选中 file node，原节点不变。
+- 已新增 `tests/canvas-summary.test.ts`，覆盖视觉排序、file subpath/整文件、text 原文和空/不可表达选区；当前定向全量测试为 8 files / 55 tests 通过。
+- 本轮 lint 首次出现 4 个 sentence-case warnings，已统一 Canvas feature 的 UI 文本为 lint 要求的 `canvas` 小写；测试首次直接导入 feature 时因 Node 环境无法解析 Obsidian 运行时入口失败，已拆出纯模型模块；随后修正一次测试夹具的视觉顺序期望。
+- README 已补充 Canvas 浮动按钮、命令面板兜底、命名规则、生成 frontmatter、视觉排序和原节点保留说明。下一步运行最终 lint/typecheck/test/build，部署六个发布文件，再做 Obsidian 实机复测。
+- 最终验证通过：`npm.cmd run lint` 0 errors / 0 warnings，`npm.cmd run typecheck` 通过，`npm.cmd run test` 8 files / 55 tests 通过，`npm.cmd run build` 通过，`node --check main.js` 通过。
+- 最新六个发布文件已覆盖到 `.obsidian/plugins/dragdrop` 和 `plugins-dev/plugin`；规范源码、实际安装目录和交付目录逐项 SHA-256 一致。最新 `main.js` 为 96,561 bytes。
+- Computer Use 能枚举唯一 Obsidian 1.12.7 窗口，但窗口停留在图片预览层；重新获取句柄后的激活/按键调用仍失败，已按 skill 恢复规则停止自动化输入。未宣称 Canvas 按钮、Markdown 剪切或 Callout 抓手的实机验收通过，待用户手工按验收步骤复测。
+
+## 会话：2026-07-30（Callout 抓手 hover）
+
+- 用户反馈 Callout gutter 抓手始终显示，而普通 block 只在 hover 时显示。
+- 已将 gutter 抓手默认图标改为隐藏，并在对应 `.cm-line` hover、gutter/抓手 hover 和键盘 focus 时显示；粗指针设备继续常显。
+- 最终验证通过：`npm.cmd run lint` 0 errors / 0 warnings、`npm.cmd run typecheck`、`npm.cmd run test`（8 files / 55 tests）、`npm.cmd run build` 和 `node --check main.js`。
+- 已将最新 `main.js` 与 `styles.css` 部署到 `.obsidian/plugins/dragdrop` 和 `plugins-dev/plugin`，三方 SHA-256 一致；等待 Obsidian 重载后的视觉复测。
+- 复核后移除了整段 `.dragdrop-gutter:hover` 规则，改为只响应当前 `.cm-gutterElement:hover`，避免多个 Callout 同时显示抓手；再次完成 lint/typecheck/test/build、bundle 检查和部署，三方哈希仍一致。
+
+## 会话：2026-07-30（继续实机复测与 hover 修正）
+
+- 重新连接 Obsidian 1.12.7 并确认当前插件已加载；浮动 `.canvas-menu` 中实际出现 `Create atomic note from canvas selection` 按钮。
+- 实机观察确认 Callout 离开悬浮时抓手隐藏，但悬浮 Callout 正文时没有稳定显示，说明当前仅同步源 `.cm-line` hover 的实现覆盖不足。
+- 对照 Outliner 的 `.cm-line + .cm-callout` 结构后锁定修复：改用 `EditorView.domEventHandlers` 统一委托 `.cm-line` 与 `.cm-embed-block.cm-callout` 的进入/离开事件，按几何位置定位对应 gutter handle；随后重新运行全套检查并部署。
+- 事件委托实现已完成；首次 lint 因 `EditorView.dom.querySelectorAll` 被 Obsidian 类型扩展推断为 `any`，改用已有的 `view.dom.findAll()` 后恢复 0 errors / 0 warnings。
+- 修复后验证通过：`npm.cmd run lint`、`npm.cmd run typecheck`、`npm.cmd run test`（8 files / 55 tests）、`npm.cmd run build`、`node --check main.js`。
+- 最新六个发布文件已部署到 `.obsidian/plugins/dragdrop` 与 `plugins-dev/plugin`，三方 SHA-256 核对通过。
+- 尝试用 Computer Use 重载 Obsidian 时，用户物理按下 Escape 中断了 Computer Use；按安全规则停止后续 UI 自动化，尚未宣称重载后的 hover 视觉复测通过。
+
+## 会话：2026-07-30（Callout 首行 block ID）
+
+- 用户确认 PDF Callout 的 ID 在首行末尾，后续正文是无 `>` 的 lazy continuation；已用该精确结构补充 Canvas 引用规划回归测试。
+- 修复拖拽启动时无关旧文字选区覆盖当前抓手的问题：只有选区覆盖当前抓手时才作为多选范围，否则使用抓手对应的完整块。
+- 当前验证：`npm.cmd run lint` 0 errors / 0 warnings，`npm.cmd run typecheck` 通过，`npm.cmd run test` 8 files / 57 tests 通过，`npm.cmd run build` 与 `node --check main.js` 通过。
+- 最新六个发布文件已同步到 `.obsidian/plugins/dragdrop` 与 `plugins-dev/plugin`；源码、标准安装目录和交付目录三方 SHA-256 全部一致，`main.js` 为 99,064 bytes。下一步由用户重载 Obsidian 后复测 Callout → Canvas。

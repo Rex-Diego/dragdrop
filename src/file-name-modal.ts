@@ -5,6 +5,11 @@ export type FileNameDecision =
   | { type: "skip" }
   | { type: "cancel-remaining" };
 
+export interface FileNameModalOptions {
+  allowSkip?: boolean;
+  cancelText?: string;
+}
+
 export class FileNameModal extends Modal {
   private settled = false;
   private resolveDecision: ((decision: FileNameDecision) => void) | undefined;
@@ -15,6 +20,7 @@ export class FileNameModal extends Modal {
     private readonly initialName: string,
     private readonly description: string,
     private readonly validate: (name: string) => string | null,
+    private readonly options: FileNameModalOptions = {},
   ) {
     super(app);
   }
@@ -46,42 +52,47 @@ export class FileNameModal extends Modal {
 
     validationSetting = new Setting(this.contentEl).setClass("dragdrop-validation");
 
-    new Setting(this.contentEl)
-      .addButton((button) =>
-        button
-          .setButtonText("Create")
-          .setCta()
-          .onClick(() => {
-            const name = this.input?.getValue().trim() ?? "";
-            const error = this.validate(name);
-            if (error) {
-              validationSetting.setDesc(error);
-              this.input?.inputEl.focus();
-              return;
-            }
-            this.finish({ type: "create", name });
-          }),
-      )
-      .addButton((button) =>
+    const buttons = new Setting(this.contentEl).addButton((button) =>
+      button
+        .setButtonText("Create")
+        .setCta()
+        .onClick(() => {
+          const name = this.input?.getValue().trim() ?? "";
+          const error = this.validate(name);
+          if (error) {
+            validationSetting.setDesc(error);
+            this.input?.inputEl.focus();
+            return;
+          }
+          this.finish({ type: "create", name });
+        }),
+    );
+    if (this.options.allowSkip !== false) {
+      buttons.addButton((button) =>
         button.setButtonText("Skip current").onClick(() => {
           this.finish({ type: "skip" });
         }),
-      )
-      .addButton((button) => {
-        button.setButtonText("Cancel remaining");
-        if (requireApiVersion("1.13.0")) button.setDestructive();
-        else button.buttonEl.addClass("mod-warning");
-        button.onClick(() => {
-          this.finish({ type: "cancel-remaining" });
-        });
+      );
+    }
+    buttons.addButton((button) => {
+      button.setButtonText(this.options.cancelText ?? "Cancel remaining");
+      if (requireApiVersion("1.13.0")) button.setDestructive();
+      else button.buttonEl.addClass("mod-warning");
+      button.onClick(() => {
+        this.finish({ type: "cancel-remaining" });
       });
+    });
 
     this.input?.inputEl.focus();
     this.input?.inputEl.select();
   }
 
   onClose(): void {
-    if (!this.settled) this.resolveDecision?.({ type: "skip" });
+    if (!this.settled) {
+      this.resolveDecision?.({
+        type: this.options.allowSkip === false ? "cancel-remaining" : "skip",
+      });
+    }
     this.contentEl.empty();
   }
 

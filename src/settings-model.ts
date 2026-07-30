@@ -1,5 +1,4 @@
 import type {
-  ArrowDirection,
   CanvasDropAction,
   FolderStrategy,
   ListParentDisplay,
@@ -20,15 +19,12 @@ export interface DragDropSettings {
   splitListItems: boolean;
   listParentDisplay: ListParentDisplay;
   titleFilenameMode: TitleFilenameMode;
-  autoLink: boolean;
-  arrowTo: ArrowDirection;
-  defaultLinkLabel: string;
   canvasBindings: Record<ModifierChord, CanvasDropAction>;
   markdownBindings: Record<ModifierChord, MarkdownDropAction>;
 }
 
 export const DEFAULT_SETTINGS: DragDropSettings = {
-  defaultFolder: "Atlas/x/Quotes",
+  defaultFolder: "Distill",
   folderStrategy: "fixed",
   nodeWidth: 400,
   initialNodeHeight: 200,
@@ -38,9 +34,6 @@ export const DEFAULT_SETTINGS: DragDropSettings = {
   splitListItems: true,
   listParentDisplay: "native-subtree",
   titleFilenameMode: "auto",
-  autoLink: false,
-  arrowTo: "end",
-  defaultLinkLabel: "",
   canvasBindings: {
     none: "link-source",
     primary: "create-note",
@@ -52,11 +45,11 @@ export const DEFAULT_SETTINGS: DragDropSettings = {
     "primary+shift+alt": "inherit",
   },
   markdownBindings: {
-    none: "move",
-    primary: "link-source",
+    none: "embed-source",
+    primary: "move",
     shift: "inherit",
     alt: "inherit",
-    "primary+shift": "embed-source",
+    "primary+shift": "inherit",
     "primary+alt": "inherit",
     "shift+alt": "inherit",
     "primary+shift+alt": "inherit",
@@ -66,16 +59,37 @@ export const DEFAULT_SETTINGS: DragDropSettings = {
 export function mergeSettings(
   loaded: Partial<DragDropSettings> | null | undefined,
 ): DragDropSettings {
+  const loadedSettings = { ...loaded };
+  Reflect.deleteProperty(loadedSettings, "protectedFolders");
+  const loadedMarkdownBindings = loaded?.markdownBindings as
+    | Record<string, unknown>
+    | undefined;
+  const markdownBindings = {
+    ...DEFAULT_SETTINGS.markdownBindings,
+    ...loaded?.markdownBindings,
+  };
+  const hasLegacyDefaults =
+    loadedMarkdownBindings?.none === "move" &&
+    loadedMarkdownBindings.primary === "link-source" &&
+    loadedMarkdownBindings["primary+shift"] === "embed-source";
+  if (hasLegacyDefaults) {
+    markdownBindings.none = DEFAULT_SETTINGS.markdownBindings.none;
+    markdownBindings.primary = DEFAULT_SETTINGS.markdownBindings.primary;
+    markdownBindings["primary+shift"] = DEFAULT_SETTINGS.markdownBindings["primary+shift"];
+  }
+  for (const chord of Object.keys(markdownBindings) as ModifierChord[]) {
+    if ((markdownBindings[chord] as unknown) === "link-source") {
+      markdownBindings[chord] = "embed-source";
+    }
+  }
+
   return {
     ...DEFAULT_SETTINGS,
-    ...loaded,
+    ...loadedSettings,
     canvasBindings: {
       ...DEFAULT_SETTINGS.canvasBindings,
       ...loaded?.canvasBindings,
     },
-    markdownBindings: {
-      ...DEFAULT_SETTINGS.markdownBindings,
-      ...loaded?.markdownBindings,
-    },
+    markdownBindings,
   };
 }

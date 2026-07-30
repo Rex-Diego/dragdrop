@@ -1,6 +1,6 @@
 import { RangeSetBuilder, StateField } from "@codemirror/state";
-import type { EditorState } from "@codemirror/state";
-import { Decoration, EditorView, WidgetType } from "@codemirror/view";
+import type { EditorState, Extension, RangeSet } from "@codemirror/state";
+import { Decoration, EditorView, GutterMarker, gutter, WidgetType } from "@codemirror/view";
 import type { DecorationSet } from "@codemirror/view";
 import { setIcon } from "obsidian";
 import { buildHandleRanges } from "./content-segmentation";
@@ -37,52 +37,7 @@ class DragHandleWidget extends WidgetType {
   }
 
   toDOM(view: EditorView): HTMLElement {
-    const element = createSpan({
-      cls: "dragdrop-handle",
-      attr: {
-        draggable: "true",
-        tabindex: "0",
-        role: "button",
-        "aria-label": "Drag Markdown block",
-        "data-tooltip-position": "top",
-      },
-    });
-    if (element.ownerDocument !== view.dom.ownerDocument) {
-      view.dom.ownerDocument.adoptNode(element);
-    }
-
-    const icon = element.createSpan({ cls: "dragdrop-handle-icon" });
-    setIcon(icon, "grip-vertical");
-
-    element.addEventListener("dragstart", (event) => {
-      this.starter.beginDrag(event, view, this.range);
-    });
-    element.addEventListener("pointerdown", (event) => {
-      this.starter.beginPointerDrag(event, view, this.range, element);
-    });
-    element.addEventListener("pointermove", (event) => {
-      this.starter.movePointerDrag(event);
-    });
-    element.addEventListener("pointerup", (event) => {
-      void this.starter.endPointerDrag(event);
-    });
-    element.addEventListener("pointercancel", (event) => {
-      this.starter.cancelPointerDrag(event.pointerId);
-    });
-    element.addEventListener("lostpointercapture", (event) => {
-      this.starter.cancelPointerDrag(event.pointerId);
-    });
-    element.addEventListener("keydown", (event) => {
-      if (event.key !== "Enter" && event.key !== " ") return;
-      event.preventDefault();
-      view.dispatch({
-        selection: { anchor: this.range.from, head: this.range.to },
-        scrollIntoView: true,
-      });
-      view.focus();
-    });
-
-    return element;
+    return createDragHandleElement(this.starter, view, this.range);
   }
 
   ignoreEvent(): boolean {
@@ -91,9 +46,157 @@ class DragHandleWidget extends WidgetType {
   }
 }
 
+class DragHandleGutterMarker extends GutterMarker {
+  elementClass = "dragdrop-gutter-marker";
+
+  constructor(
+    private readonly starter: DragStarter,
+    private readonly handleRange: HandleRange,
+  ) {
+    super();
+  }
+
+  eq(other: GutterMarker): boolean {
+    return (
+      other instanceof DragHandleGutterMarker &&
+      other.starter === this.starter &&
+      other.handleRange.from === this.handleRange.from &&
+      other.handleRange.to === this.handleRange.to &&
+      other.handleRange.kind === this.handleRange.kind
+    );
+  }
+
+  toDOM(view: EditorView): HTMLElement {
+    const element = createDragHandleElement(this.starter, view, this.handleRange);
+    return element;
+  }
+}
+
+const hoveredGutterHandles = new WeakMap<EditorView, HTMLElement>();
+
+function elementFromEventTarget(target: EventTarget | null): Element | null {
+  if (!target || typeof target !== "object" || !("nodeType" in target)) return null;
+
+  const node = target as Node;
+  return node.nodeType === 1 ? (node as Element) : node.parentElement;
+}
+
+function hoverAnchorFromTarget(target: EventTarget | null, view: EditorView): Element | null {
+  const element = elementFromEventTarget(target);
+  if (!element || !view.dom.contains(element)) return null;
+
+  const callout = element.closest(".cm-embed-block.cm-callout");
+  if (callout) {
+    const sourceLine = callout.previousElementSibling;
+    return sourceLine?.classList.contains("cm-line") ? sourceLine : callout;
+  }
+
+  return element.closest(".cm-line");
+}
+
+function findGutterHandle(view: EditorView, anchor: Element): HTMLElement | null {
+  const anchorTop = anchor.getBoundingClientRect().top;
+  let nearest: HTMLElement | null = null;
+  let nearestDistance = Number.POSITIVE_INFINITY;
+
+  for (const candidate of view.dom.findAll(".dragdrop-gutter .dragdrop-handle")) {
+    const distance = Math.abs(candidate.getBoundingClientRect().top - anchorTop);
+    if (distance < nearestDistance) {
+      nearest = candidate;
+      nearestDistance = distance;
+    }
+  }
+
+  return nearestDistance <= 64 ? nearest : null;
+}
+
+function setHoveredGutterHandle(view: EditorView, anchor: Element | null): void {
+  const previous = hoveredGutterHandles.get(view);
+  const next = anchor ? findGutterHandle(view, anchor) : null;
+
+  if (previous && previous !== next) {
+    previous.removeClass("dragdrop-handle-line-hover");
+  }
+
+  if (next) {
+    next.addClass("dragdrop-handle-line-hover");
+    hoveredGutterHandles.set(view, next);
+  } else {
+    hoveredGutterHandles.delete(view);
+  }
+}
+
+function createGutterHoverExtension(): Extension {
+  return EditorView.domEventHandlers({
+    mouseover: (event, view) => {
+      setHoveredGutterHandle(view, hoverAnchorFromTarget(event.target, view));
+      return false;
+    },
+    mouseout: (event, view) => {
+      setHoveredGutterHandle(view, hoverAnchorFromTarget(event.relatedTarget, view));
+      return false;
+    },
+  });
+}
+
+function createDragHandleElement(
+  starter: DragStarter,
+  view: EditorView,
+  range: HandleRange,
+): HTMLElement {
+  const element = createSpan({
+    cls: "dragdrop-handle",
+    attr: {
+      draggable: "true",
+      tabindex: "0",
+      role: "button",
+      "aria-label": "Drag Markdown block",
+      "data-tooltip-position": "top",
+      "data-dragdrop-handle-kind": range.kind,
+    },
+  });
+  if (element.ownerDocument !== view.dom.ownerDocument) {
+    view.dom.ownerDocument.adoptNode(element);
+  }
+
+  const icon = element.createSpan({ cls: "dragdrop-handle-icon" });
+  setIcon(icon, "grip-vertical");
+
+  element.addEventListener("dragstart", (event) => {
+    starter.beginDrag(event, view, range);
+  });
+  element.addEventListener("pointerdown", (event) => {
+    starter.beginPointerDrag(event, view, range, element);
+  });
+  element.addEventListener("pointermove", (event) => {
+    starter.movePointerDrag(event);
+  });
+  element.addEventListener("pointerup", (event) => {
+    void starter.endPointerDrag(event);
+  });
+  element.addEventListener("pointercancel", (event) => {
+    starter.cancelPointerDrag(event.pointerId);
+  });
+  element.addEventListener("lostpointercapture", (event) => {
+    starter.cancelPointerDrag(event.pointerId);
+  });
+  element.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    view.dispatch({
+      selection: { anchor: range.from, head: range.to },
+      scrollIntoView: true,
+    });
+    view.focus();
+  });
+
+  return element;
+}
+
 function buildDecorations(state: EditorState, starter: DragStarter): DecorationSet {
   const builder = new RangeSetBuilder<Decoration>();
   for (const range of buildHandleRanges(state)) {
+    if (range.kind === "callout") continue;
     builder.add(
       range.from,
       range.from,
@@ -107,8 +210,17 @@ function buildDecorations(state: EditorState, starter: DragStarter): DecorationS
   return builder.finish();
 }
 
-export function createDragHandleExtension(starter: DragStarter): StateField<DecorationSet> {
-  return StateField.define<DecorationSet>({
+function buildGutterMarkers(state: EditorState, starter: DragStarter): RangeSet<GutterMarker> {
+  const builder = new RangeSetBuilder<GutterMarker>();
+  for (const range of buildHandleRanges(state)) {
+    if (range.kind !== "callout") continue;
+    builder.add(range.from, range.from, new DragHandleGutterMarker(starter, range));
+  }
+  return builder.finish();
+}
+
+export function createDragHandleExtension(starter: DragStarter): Extension {
+  const decorationField = StateField.define<DecorationSet>({
     create(state) {
       return buildDecorations(state, starter);
     },
@@ -118,4 +230,28 @@ export function createDragHandleExtension(starter: DragStarter): StateField<Deco
     },
     provide: (field) => EditorView.decorations.from(field),
   });
+
+  const gutterField = StateField.define<RangeSet<GutterMarker>>({
+    create(state) {
+      return buildGutterMarkers(state, starter);
+    },
+    update(value, transaction) {
+      if (!transaction.docChanged) return value;
+      return buildGutterMarkers(transaction.state, starter);
+    },
+  });
+
+  return [
+    decorationField,
+    gutterField,
+    gutter({
+      class: "dragdrop-gutter",
+      side: "before",
+      renderEmptyElements: false,
+      markers: (view) => view.state.field(gutterField),
+      lineMarkerChange: (update) =>
+        update.docChanged || update.viewportChanged || update.geometryChanged,
+    }),
+    createGutterHoverExtension(),
+  ];
 }

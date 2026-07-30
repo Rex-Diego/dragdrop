@@ -122,6 +122,29 @@ describe("content segmentation", () => {
     }
   });
 
+  it("reuses a block ID placed on an interior Callout line", () => {
+    const doc = [
+      "> [!note] Header",
+      "> Callout body ^interior-callout-id",
+      "> lazy continuation",
+    ].join("\n");
+    const state = createMarkdownState(doc);
+    const units = collectSourceUnits(
+      state,
+      buildHandleRanges(state),
+      true,
+      "native-subtree",
+    );
+
+    expect(units).toHaveLength(1);
+    expect(units[0].existingBlockId).toBe("interior-callout-id");
+
+    const planned = ensurePlannedReference(state, units[0], new Set());
+    expect(planned.plannedBlockId).toBe("interior-callout-id");
+    expect(planned.blockIdInsert).toBeUndefined();
+    expect(sourceSubpath(planned)).toBe("#^interior-callout-id");
+  });
+
   it("adds one standalone ID after an entire lazy callout when none exists", () => {
     const doc = ["> [!PDF] reference", "lazy body"].join("\n");
     const state = createMarkdownState(doc);

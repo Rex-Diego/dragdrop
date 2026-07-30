@@ -35,10 +35,7 @@ type ScalarSettingKey =
   | "initialNodeHeight"
   | "nodeGap"
   | "previewWidth"
-  | "touchDropAction"
-  | "autoLink"
-  | "arrowTo"
-  | "defaultLinkLabel";
+  | "touchDropAction";
 
 type CanvasBindingSettingKey = `canvasBindings.${ModifierChord}`;
 type MarkdownBindingSettingKey = `markdownBindings.${ModifierChord}`;
@@ -81,7 +78,6 @@ const CANVAS_ACTION_LABELS: Record<CanvasDropAction, string> = {
 const MARKDOWN_ACTION_LABELS: Record<MarkdownDropAction, string> = {
   inherit: "Use no-modifier action",
   move: "Move content",
-  "link-source": "Insert source link",
   "embed-source": "Insert source embed",
   none: "Do nothing",
 };
@@ -256,34 +252,6 @@ export class DragDropSettingTab extends PluginSettingTab {
       },
       {
         type: "group",
-        heading: "Automatic links",
-        items: [
-          {
-            name: "Create canvas edges",
-            desc: "Reserved for source types that include a Canvas node. Normal Markdown sources have none, so this does nothing for now.",
-            control: { type: "toggle", key: "autoLink" },
-          },
-          {
-            name: "Arrow direction",
-            control: {
-              type: "dropdown",
-              key: "arrowTo",
-              options: {
-                from: "Toward source",
-                end: "Toward new card",
-                both: "Both directions",
-                none: "No arrows",
-              },
-            },
-          },
-          {
-            name: "Edge label",
-            control: { type: "text", key: "defaultLinkLabel" },
-          },
-        ],
-      },
-      {
-        type: "group",
         heading: "Canvas modifier actions",
         items: MODIFIER_CHORDS.map((chord) => ({
           name: CHORD_LABELS[chord],
@@ -296,7 +264,7 @@ export class DragDropSettingTab extends PluginSettingTab {
       },
       {
         type: "group",
-        heading: "Markdown modifier actions (future)",
+        heading: "Markdown modifier actions",
         items: MODIFIER_CHORDS.map((chord) => ({
           name: CHORD_LABELS[chord],
           control: {
@@ -395,12 +363,6 @@ export class DragDropSettingTab extends PluginSettingTab {
         return this.host.config.previewWidth;
       case "touchDropAction":
         return this.host.config.touchDropAction;
-      case "autoLink":
-        return this.host.config.autoLink;
-      case "arrowTo":
-        return this.host.config.arrowTo;
-      case "defaultLinkLabel":
-        return this.host.config.defaultLinkLabel;
       default:
         return undefined;
     }
@@ -471,18 +433,6 @@ export class DragDropSettingTab extends PluginSettingTab {
       case "touchDropAction":
         if (!isTouchDropAction(value)) return;
         this.host.config.touchDropAction = value;
-        break;
-      case "autoLink":
-        if (typeof value !== "boolean") return;
-        this.host.config.autoLink = value;
-        break;
-      case "arrowTo":
-        if (value !== "from" && value !== "end" && value !== "both" && value !== "none") return;
-        this.host.config.arrowTo = value;
-        break;
-      case "defaultLinkLabel":
-        if (typeof value !== "string") return;
-        this.host.config.defaultLinkLabel = value;
         break;
       default:
         return;

@@ -52,6 +52,14 @@ function openingLineBlockId(text: string): string | undefined {
   return firstLine.match(BLOCK_ID_RE)?.[1];
 }
 
+function blockIdOnAnyLine(text: string): string | undefined {
+  return text
+    .split("\n")
+    .map((line) => line.match(BLOCK_ID_RE)?.[1])
+    .filter((value): value is string => value !== undefined)
+    .at(-1);
+}
+
 function standaloneBlockIdAfter(doc: Text, to: number): string | undefined {
   const line = doc.lineAt(to);
   if (line.number >= doc.lines) return undefined;
@@ -78,6 +86,10 @@ function createPrimitive(
     kind === "quote" || kind === "callout"
       ? openingLineBlockId(text)
       : undefined;
+  const quotedBlockId =
+    kind === "quote" || kind === "callout"
+      ? blockIdOnAnyLine(text)
+      : undefined;
   return {
     from,
     to,
@@ -88,7 +100,7 @@ function createPrimitive(
     existingBlockId:
       kind === "heading"
         ? undefined
-        : openingId ?? existingBlockId(text) ?? standaloneBlockIdAfter(doc, to),
+        : openingId ?? quotedBlockId ?? existingBlockId(text) ?? standaloneBlockIdAfter(doc, to),
     anchorFrom: from,
     anchorTo: to,
     selfOnlyText: withoutTrailingBlockId(text.split("\n", 1)[0] ?? text),

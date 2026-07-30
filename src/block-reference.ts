@@ -52,6 +52,10 @@ export function sourceSubpath(unit: SourceUnit): string {
   return blockId ? `#^${blockId}` : "";
 }
 
+export function sourceEmbedLink(linktext: string, subpath = ""): string {
+  return `![[${linktext}${subpath}]]`;
+}
+
 export function applyBlockIdInsertions(
   state: EditorState,
   dispatch: (transaction: ReturnType<EditorState["update"]>) => void,

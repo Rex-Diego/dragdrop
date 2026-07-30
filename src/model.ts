@@ -1,7 +1,6 @@
 import type { EditorView } from "@codemirror/view";
 import type { EditorState } from "@codemirror/state";
 import type { TFile } from "obsidian";
-import type { CanvasNode } from "./canvas-types";
 
 export const MODIFIER_CHORDS = [
   "none",
@@ -26,16 +25,13 @@ export type TouchDropAction = Exclude<CanvasDropAction, "inherit">;
 
 export type MarkdownDropAction =
   | "inherit"
-  | "move"
-  | "link-source"
   | "embed-source"
+  | "move"
   | "none";
 
 export type FolderStrategy = "fixed" | "source" | "canvas";
 export type ListParentDisplay = "native-subtree" | "self-only";
 export type TitleFilenameMode = "auto" | "prompt";
-export type ArrowDirection = "from" | "end" | "both" | "none";
-
 export type SourceUnitKind =
   | "paragraph"
   | "heading"
@@ -76,7 +72,6 @@ export interface DragSession {
   sourcePath: string;
   units: SourceUnit[];
   previewMarkdown: string;
-  sourceCanvasNode?: CanvasNode;
 }
 
 export interface PlannedFileTask {

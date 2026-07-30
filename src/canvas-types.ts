@@ -44,18 +44,11 @@ export interface CanvasTextNode extends CanvasNode {
   text: string;
 }
 
-export interface CanvasEdgeNode {
-  id: string;
-  setLabel(label?: string): void;
-  attach?(): void;
-  render?(): void;
-}
-
 export interface ObsidianCanvas {
   readonly?: boolean;
   nodes: Map<string, CanvasNode>;
-  edges: Map<string, CanvasEdgeNode>;
   selection: Set<CanvasNode>;
+  updateSelection?(callback: () => void): void;
   posFromEvt(event: MouseEvent): CanvasPoint;
   createFileNode(config: {
     file: TFile;
@@ -74,12 +67,6 @@ export interface ObsidianCanvas {
   }): CanvasTextNode;
   requestFrame(): void | Promise<void>;
   requestSave(): void | Promise<void>;
-  getData?(): {
-    nodes: unknown[];
-    edges: unknown[];
-  };
-  importData?(data: { nodes: unknown[]; edges: unknown[] }): void;
-  addEdge?(edge: CanvasEdgeNode): void;
 }
 
 export interface CanvasView extends TextFileView {

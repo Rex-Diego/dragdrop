@@ -1,6 +1,6 @@
 # DragDrop
 
-Drag Markdown blocks into Obsidian Canvas as source references or generated note cards.
+Drag Markdown blocks into Obsidian Canvas as source references or generated note cards, into another Markdown note as an embed or move, or turn a Canvas selection into one atomic note.
 
 DragDrop is focused on one workflow: Markdown → Canvas. It does not include search views, Excalidraw integration, note management, or automatic preview panes.
 
@@ -19,6 +19,36 @@ DragDrop is focused on one workflow: Markdown → Canvas. It does not include se
 
 Modifier actions are configurable. The action is resolved when the block is dropped, so you can change the modifier during the drag.
 
+When a dragged block is already a standalone embed such as `![[Books/Source#^abc123]]`, a Canvas reference points directly to `Books/Source#^abc123`. DragDrop does not append another block ID to the source note. If several blocks are selected, ordinary blocks and existing embeds are resolved independently; an unresolved embedded target cancels the whole Canvas drop before any source ID is written.
+
+### Markdown to Markdown
+
+1. Open a source Markdown note and a destination Markdown note.
+2. Drag a block handle into the destination editor.
+3. With no modifier, DragDrop inserts an embed such as `![[Source note#^block-id]]` and only adds a missing block ID to the source.
+4. Hold Ctrl on Windows/Linux or Command on macOS to move the block. Moving a block with an existing ID and moving from a read-only editor are guarded to prevent accidental loss.
+
+Markdown drops align to a destination block boundary. They do not perform outline indentation, folding, or list restructuring.
+
+### Canvas selection to atomic note
+
+Select one or more Canvas nodes and click the lightbulb button in the floating `.canvas-menu` toolbar. The same action is available as **Create atomic note from canvas selection** in the command palette if toolbar injection is unavailable.
+
+The name prompt is required and starts with a neutral placeholder. File nodes become embeds using their existing file path and subpath, text nodes are written as-is, and entries follow visual order from top to bottom and then left to right. The original nodes remain on the Canvas; the newly created note is added as a new file node and selected.
+
+The generated note uses the current folder strategy and contains only the four empty template properties plus the selected content:
+
+```markdown
+---
+up:
+topics:
+tags:
+rank:
+---
+
+![[Source note#^block-id]]
+```
+
 ### Touch and pen
 
 On a Surface, touch or pen drag starts from the block handle after moving at least 8 px. A tap on the handle selects the complete block. Touch and pen use the separate **Touch drop action** setting, which defaults to linking the source block; a keyboard modifier at drop time uses the normal Canvas modifier mapping instead.
@@ -27,12 +57,14 @@ Touch and pen drops support a Canvas in the same Obsidian window. Mouse dragging
 
 ## Source content and generated notes
 
-DragDrop keeps the Markdown source as the single content source:
+For Canvas references and Markdown embeds, DragDrop keeps the Markdown source as the single content source:
 
-- It never cuts, replaces, or moves the dragged source content.
+- It never cuts, replaces, or moves the dragged source content for Canvas drops or embeds.
 - It only adds a missing block ID when a block reference requires one.
 - Existing block IDs are reused.
 - Heading references use the heading subpath and do not add a block ID.
+
+An explicit Ctrl/Command Markdown drop is the only action that removes source content. It asks before moving blocks with existing IDs and requires an editable source and destination.
 
 A generated note contains a blank first line followed by a source embed:
 
@@ -67,7 +99,7 @@ For lists, you can choose:
 
 Created notes can be stored in:
 
-- A fixed folder (default: `Atlas/x/Quotes`)
+- A fixed folder (default: `Distill`)
 - The source note's folder
 - The Canvas file's folder
 
@@ -97,10 +129,10 @@ The settings tab includes:
 - Canvas node width, initial height, and gap
 - Drag preview width
 - Canvas modifier-action mappings
-- Reserved Markdown modifier-action mappings for a future Markdown → Markdown phase
-- Reserved automatic-edge options for future source types that have a Canvas node
+- Markdown modifier-action mappings (`embed-source`, `move`, `none`, or inherit)
+- Canvas selection to atomic note from the floating toolbar or command palette
 
-The Markdown modifier mappings and automatic-edge options do not perform target handling for ordinary Markdown sources in this release.
+The Canvas settings and Markdown settings use separate modifier mappings. Markdown defaults are no modifier = embed and Ctrl/Command = move.
 
 ## Compatibility and limitations
 
@@ -108,8 +140,9 @@ The Markdown modifier mappings and automatic-edge options do not perform target 
 - Drag handles are keyboard focusable, and Enter or Space selects the complete source block.
 - Touch and pen require the Canvas private APIs used for coordinate lookup and node creation. If those APIs are unavailable, DragDrop cancels the drop before changing the Markdown source.
 - The drop target and node creation flow use Obsidian's private Canvas API, so Obsidian updates may require compatibility changes.
+- The floating toolbar button uses private `.canvas-menu` DOM observation. If that toolbar changes, the command palette fallback remains available and the rest of the plugin continues to work.
 - The manifest currently declares Obsidian 1.5.11 as the minimum version. Development uses the Obsidian 1.13.1 type surface; verify older desktop versions before relying on them.
-- Markdown → Markdown dragging is not implemented in this phase.
+- Markdown → Markdown dragging is supported only between Markdown editors; it does not restructure list indentation or outline hierarchy.
 - Canvas height fitting is best effort. If measurement fails, the configured initial height is kept.
 
 ## Data changes
@@ -119,6 +152,7 @@ Depending on the selected action, DragDrop may:
 - Add missing block IDs to the active Markdown editor
 - Create folders and Markdown notes in the vault
 - Add file or text nodes to the target Canvas
+- Move a Markdown block to another editable Markdown note when Ctrl/Command is held and all safety checks pass, regardless of folder
 
 It does not send vault content over the network.
 

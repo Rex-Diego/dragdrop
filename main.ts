@@ -1,6 +1,7 @@
 import { Plugin } from "obsidian";
 import { createDragHandleExtension } from "./src/drag-handle-extension";
 import { DragSessionManager } from "./src/drag-session-manager";
+import { CanvasSummaryFeature } from "./src/canvas-summary";
 import { DragDropSettingTab } from "./src/settings-tab";
 import { DEFAULT_SETTINGS, mergeSettings, type DragDropSettings } from "./src/settings-model";
 
@@ -16,6 +17,7 @@ export default class DragDropPlugin extends Plugin {
 
     const dragManager = new DragSessionManager(this);
     this.addChild(dragManager);
+    this.addChild(new CanvasSummaryFeature({ app: this.app, config: this.config, plugin: this }));
     this.registerEditorExtension(createDragHandleExtension(dragManager));
     this.addSettingTab(new DragDropSettingTab(this.app, this));
   }

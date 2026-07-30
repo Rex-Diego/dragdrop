@@ -187,6 +187,64 @@
 - QA 基线监测发现 `Source.md` 在打开后由 294 bytes 变为 295 bytes，文件开头新增一个 LF，但尚无 block ID，`Target.canvas` 仍为空；需在拖放前确认并记录这一非预期空行，避免误判为插件的 block ID 修改。
 - 未使用浏览器工具；GitHub Release 元数据只用于确认版本演进，已转化为上述事实。
 
+## 阶段 6 锁定决策（2026-07-29）
+
+- 用户明确批准正式进入 Markdown→Markdown 阶段。它是“书摘 Markdown → 原子笔记 Markdown”的主干路径，不再只是设置与动作结构预留；`AGENTS.md` 中原有约束已同步改写。
+- 阶段 6 的 Markdown 动作只保留 `inherit`、`embed-source`、`move`、`none`；删除 `link-source`。无修饰键默认 `embed-source`，Primary 默认 `move`，其余默认继承。硬编码解析回退同样必须是 `embed-source`，确保配置损坏时不误删源内容。
+- 初始实现曾新增 `protectedFolders: ["Capture"]`，但用户在 2026-07-29 明确撤销该限制；不再按源文件夹或目标文件夹限制搬移。
+- 阶段 6 继续保留第一阶段“Markdown → Canvas”语义和阶段 4.5 触控实现；不把阶段 4/4.5 未完成实机验收伪装为本阶段完成。
+- 源码审计确认 `CanvasEdgeNode`、`edges`、`addEdge`、`setLabel` 及其数据导入预留没有调用方，已随死的自动连线设置一起删除。
+- Markdown 文本规划已独立为无 Obsidian 依赖模块：块搬移先计算完整删除范围，再映射同文件目标 offset，最后一次性生成结果；重叠范围在写入前抛错。
+- Markdown 拖放已接入 `handleDragOver`/`handleDrop` 的 Canvas 后备分支：目标按编辑器块边界对齐，嵌入只补必要 block ID，搬移支持跨文件和同编辑器，并在跨文件第二次写入失败时回滚首个编辑器。
+- Markdown→Markdown 中间交付已通过 `npm.cmd run lint`（0 errors / 0 warnings）、`npm.cmd run typecheck`、`npm.cmd run test`（6 files / 44 tests）和 `npm.cmd run build`；Canvas 浮动工具栏尚未开始，下一阶段必须单独评估其私有 API。
+- 实机复制行为的根因不是当前源码分支：项目新 bundle 已含 Markdown drop resolver，但实际 `.obsidian/plugins/dragdrop/main.js` 和 `plugins-dev/plugin/main.js` 仍是 2026-07-20 的旧 64,006-byte bundle。新 79,767-byte bundle 已部署到两个目录并完成 SHA-256 一致性核对。
+- 用户反馈确认：源块本身已经是完整的 `![[...#^blockid]]` 时，Markdown→Markdown 的无修饰键动作必须原样复制该嵌入，不追加新的 block ID，也不改写成指向源文件的另一条嵌入；Ctrl/Command 按动作映射执行搬移。
+- 为避免 Electron/Obsidian 在 `drop` 事件中丢失修饰键，Markdown 目标在每次有效 `dragover` 时锁存解析后的动作；`drop` 优先采用同一窗口最近一次有效目标动作，再回退到当前事件解析。Canvas 目标、无效目标、取消、`dragend`、完成提交和卸载都会清除锁存状态。
+- 目的地反馈参考 `outliner-md` 的 body 级 `drag-target-line`：本插件新增 `.dragdrop-markdown-drop-line`，使用 CodeMirror 块边界的视口坐标实时定位，目标无效或拖拽结束即移除；未引入右键菜单事件作为替代入口。
+- 本轮静态修复后基线为 lint 0 errors / 0 warnings、typecheck 通过、6 files / 47 tests 通过、生产 build 和 `node --check main.js` 通过；最新 `main.js` 与 `styles.css` 已同步到实际插件目录和 `plugins-dev/plugin`，三方哈希一致。下一步先做 Obsidian 实机复测，再继续 Canvas 浮动工具栏。
+- 对照仓库内 `references/Outliner.MD/src/components/drag-n-drop/dragDropManager.ts`：Outliner 的全局 `dragover` 固定 `dropEffect = "move"`，`handleDrop` 始终调用 `handleNormalDrop`，`handleCtrlDrop` 与 `handleAltDrop` 均为空；该实现没有受保护目录判断，与用户最终要求的任意文件夹搬移一致。
+- 用户随后明确要求取消文件夹限制：删除 `protectedFolders` 设置、UI、合并逻辑和 `protectMoveAction`；Ctrl/Command 在任意文件夹间都执行搬移，只保留 block ID 确认、只读源拒绝和多块整体事务约束。
+- 取消限制后的生产 bundle 为 81,470 bytes，已同步到实际插件目录和 `plugins-dev/plugin`；三方 `main.js` 与 `styles.css` SHA-256 一致，bundle 中不再包含 protected Notice 或 move 拦截分支，仅保留旧字段清理。
+- 用户补充确认：Markdown→Canvas 遇到完整独立 `![[...#^blockid]]` 时，应把该行视为原始块的引用，不得在源文件追加第二个 block ID；Canvas file node 必须使用双链解析出的目标文件和原始 `#^blockid`。
+- 为实现上述语义，Canvas 引用规划先用 Obsidian `parseLinktext()` 拆分 linktext，再用 `metadataCache.getFirstLinkpathDest()` 解析目标文件；所有目标解析成功后才允许规划普通块 ID或写入源文件。空路径 `![[#^id]]` 解析为当前源文件。
+- 混合多块拖拽中，普通块继续补充必要 ID，已有块嵌入保持无插入并指向各自目标；创建原子笔记路径也复用该外部引用，避免只修复默认 Canvas 引用路径。
+- 用户反馈 Markdown→Markdown 的分界线在标题/列表等大范围内容中只能命中很少位置。根因是落点计算对 `buildHandleRanges()` 使用首个匹配范围；外层可折叠范围覆盖多个子 block 时，子 block 和空行边界被遮蔽。
+- 分界线选择改为收集所有 handle range 的起止 offset（包括嵌套范围），为每个 offset 计算实际视口纵坐标，再选择离鼠标最近的边界；仍只在 block 边界插入，不把普通 block 从行中间切开。
+
 ---
 *每执行2次查看/浏览器/搜索操作后更新此文件*
 *防止视觉信息丢失*
+
+## Live Preview Callout 抓手（2026-07-29）
+
+- 用户反馈 Live Preview 中 Callout 的 inline 抓手只有在整块被选中后才出现。实机 DOM 确认 Callout 被渲染为独立的 `.cm-embed-block.cm-callout`，inline decoration 仍位于源 `.cm-line`，会被渲染块遮挡或移出可见位置。
+- 本轮采用 CodeMirror `gutter()` + `GutterMarker` 为 Callout 渲染抓手；marker 复用原有 `DragStarter` 事件、键盘选择和 `ignoreEvent() === true`，普通段落/列表等继续使用原 inline decoration。选择 gutter 是为了让 Live Preview 的独立渲染块仍有稳定的可见挂点，避免依赖私有 Callout DOM 层级。
+- 实机自动化复测在部署后停在图片预览窗口，Computer Use 无法重新激活该窗口；源码、构建产物和三个部署目录已完成静态/哈希验证，仍需用户在 Obsidian 中重载后确认视觉与实际拖动。
+
+## 阶段 6 Canvas 工具栏评估（2026-07-29）
+
+- 已检查 vault 中启用的 Advanced Canvas 6.0.1 bundle。它暴露 `advanced-canvas:selection-changed`、`advanced-canvas:canvas-changed` 等 workspace 事件，也有 `popup-menu-created`，但没有发现 `.canvas-menu` 浮动工具栏的扩展/注册接口。
+- `popup-menu-created` 与 Obsidian 的右键菜单链路相关，不能作为用户要求的选中节点后浮动工具栏入口。
+- 锁定采用 MutationObserver：为主窗口和 workspace `window-open` 产生的每个 owner document 观察 `.canvas-menu` 的重建，注入一次性图标按钮；observer 在 `onunload` 中逐个 disconnect。命令面板命令作为始终可用的兜底，注入失败只忽略该菜单，不影响拖拽主链路。
+- Canvas 归纳按钮只新增原子笔记和一个新的 Canvas file node，不删除或替换选中节点。选区按 `y`、再按 `x` 排序；file node 复用原 file/subpath，text node 保留原文。
+- 原子笔记命名必须经过 `FileNameModal`，使用中性初始名并禁用“跳过”路径；Esc/取消只取消本次创建，不会静默跳过命名。
+- 排序、节点转换和正文构造已抽到无 Obsidian 运行时依赖的 `canvas-summary-model.ts`，因此可以在现有 Node/Vitest 环境中直接覆盖；生命周期、vault、modal 和 Canvas 私有 API 保留在 `canvas-summary.ts`。
+
+## Live Preview Callout hover 修正（2026-07-30）
+
+- Callout 的 gutter marker 原先为了保证可见性强制 `opacity: 1`，导致它与普通 block 的 hover 反馈不一致。
+- 现在默认隐藏图标，并由对应 `.cm-line` 的 hover 同步 `dragdrop-handle-line-hover` class；gutter/抓手 hover 和键盘 focus 仍能显示，粗指针设备维持常显以保留触控可用性。
+
+## Live Preview Callout 实机复测（2026-07-30 继续）
+
+- Obsidian 1.12.7 当前窗口已实际加载最新插件；`.canvas-menu` 中可见 `Create atomic note from canvas selection` 按钮，确认浮动工具栏注入路径已生效。
+- 鼠标移到 Canvas 空白处后，Live Preview Callout 抓手保持隐藏；移到 Callout 正文时，抓手没有稳定显示。
+- 根因补充：Callout 在 Live Preview 中是独立的 `.cm-embed-block.cm-callout`，与承载源码的 `.cm-line` 为兄弟节点；仅在 gutter marker 创建时给 `.cm-line` 注册 hover 监听，无法覆盖 Callout 渲染块本身。
+- 修复方向锁定为 CodeMirror `EditorView.domEventHandlers` 事件委托：同时监听 `.cm-line` 与 `.cm-embed-block.cm-callout`，按对应行的几何位置找到 gutter handle 并切换 hover class；不使用 `:has()`，也不为每次 marker 重建追加长期 DOM 监听器。
+
+## Callout 首行 block ID 修复（2026-07-30）
+
+- 用户确认 PDF Callout 的 block ID 位于首行末尾，例如 `> [!PDF|blue] [[...]] ^2024-07-20-09-41-41`，下一行是没有 `>` 的 lazy continuation。
+- `content-segmentation.ts` 的 Callout 分块与 `canvas-reference.ts` 的引用规划已用该精确形状建立回归：最终 `subpath` 必须为 `#^2024-07-20-09-41-41`，且 `blockIdInsert` 未定义，源文件不会追加第二个 ID。
+- 拖拽启动时如果编辑器残留一个与当前抓手无关的非空文字选区，之前会优先采用该选区；现在只有当前选区覆盖抓手时才采用多选，否则使用抓手对应的完整块。这保留多块拖拽，同时避免 Callout 首行被旧选区绕开。
+- 当前静态验证：`npm.cmd run lint` 0 errors / 0 warnings，`npm.cmd run typecheck` 通过，`npm.cmd run test` 为 8 files / 57 tests 通过；仍需生产构建、部署和 Obsidian 实机复测。
