@@ -18,7 +18,13 @@ import {
   type ModifierChord,
   type TouchDropAction,
 } from "./model";
-import type { DragDropSettings } from "./settings-model";
+import {
+  assignedModifierForAction,
+  assignModifierToAction,
+  UNASSIGNED_MODIFIER,
+  type BindingModifier,
+  type DragDropSettings,
+} from "./settings-model";
 
 interface SettingsHost {
   config: DragDropSettings;
@@ -35,11 +41,14 @@ type ScalarSettingKey =
   | "initialNodeHeight"
   | "nodeGap"
   | "previewWidth"
-  | "touchDropAction";
+  | "touchDropAction"
+  | "surfacePenSideButtonDrag";
 
-type CanvasBindingSettingKey = `canvasBindings.${ModifierChord}`;
-type MarkdownBindingSettingKey = `markdownBindings.${ModifierChord}`;
-type SettingKey = ScalarSettingKey | CanvasBindingSettingKey | MarkdownBindingSettingKey;
+type CanvasBindingAction = Exclude<CanvasDropAction, "inherit">;
+type MarkdownBindingAction = Exclude<MarkdownDropAction, "inherit">;
+type CanvasActionSettingKey = `canvasAction.${CanvasBindingAction}`;
+type MarkdownActionSettingKey = `markdownAction.${MarkdownBindingAction}`;
+type SettingKey = ScalarSettingKey | CanvasActionSettingKey | MarkdownActionSettingKey;
 
 type SupportedSettingControl =
   | SettingToggleControl<SettingKey>
@@ -59,14 +68,31 @@ type DragDropSettingGroup = Omit<SettingDefinitionGroup<SettingKey>, "items" | "
 
 const CHORD_LABELS: Record<ModifierChord, string> = {
   none: "No modifier",
-  primary: "Primary",
+  primary: "Ctrl / Command",
   shift: "Shift",
   alt: "Alt or Option",
-  "primary+shift": "Primary + Shift",
-  "primary+alt": "Primary + Alt or Option",
+  "primary+shift": "Ctrl / Command + Shift",
+  "primary+alt": "Ctrl / Command + Alt or Option",
   "shift+alt": "Shift + Alt or Option",
-  "primary+shift+alt": "Primary + Shift + Alt or Option",
+  "primary+shift+alt": "Ctrl / Command + Shift + Alt or Option",
 };
+
+const MODIFIER_OPTIONS: Record<BindingModifier, string> = {
+  [UNASSIGNED_MODIFIER]: "Not assigned",
+  ...CHORD_LABELS,
+};
+
+const CANVAS_BINDING_ACTIONS: CanvasBindingAction[] = [
+  "link-source",
+  "create-note",
+  "none",
+];
+
+const MARKDOWN_BINDING_ACTIONS: MarkdownBindingAction[] = [
+  "embed-source",
+  "move",
+  "none",
+];
 
 const CANVAS_ACTION_LABELS: Record<CanvasDropAction, string> = {
   inherit: "Use no-modifier action",
@@ -82,30 +108,40 @@ const MARKDOWN_ACTION_LABELS: Record<MarkdownDropAction, string> = {
   none: "Do nothing",
 };
 
-function canvasBindingKey(chord: ModifierChord): CanvasBindingSettingKey {
-  return `canvasBindings.${chord}`;
+function canvasActionKey(action: CanvasBindingAction): CanvasActionSettingKey {
+  return `canvasAction.${action}`;
 }
 
-function markdownBindingKey(chord: ModifierChord): MarkdownBindingSettingKey {
-  return `markdownBindings.${chord}`;
+function markdownActionKey(action: MarkdownBindingAction): MarkdownActionSettingKey {
+  return `markdownAction.${action}`;
 }
 
 function isModifierChord(value: string): value is ModifierChord {
   return MODIFIER_CHORDS.some((chord) => chord === value);
 }
 
-function bindingChord(key: string, prefix: "canvasBindings." | "markdownBindings."): ModifierChord | undefined {
-  if (!key.startsWith(prefix)) return undefined;
-  const chord = key.slice(prefix.length);
-  return isModifierChord(chord) ? chord : undefined;
+function canvasActionFromKey(key: string): CanvasBindingAction | undefined {
+  if (!key.startsWith("canvasAction.")) return undefined;
+  const action = key.slice("canvasAction.".length);
+  return isCanvasBindingAction(action) ? action : undefined;
 }
 
-function isCanvasDropAction(value: unknown): value is CanvasDropAction {
-  return typeof value === "string" && Object.hasOwn(CANVAS_ACTION_LABELS, value);
+function markdownActionFromKey(key: string): MarkdownBindingAction | undefined {
+  if (!key.startsWith("markdownAction.")) return undefined;
+  const action = key.slice("markdownAction.".length);
+  return isMarkdownBindingAction(action) ? action : undefined;
 }
 
-function isMarkdownDropAction(value: unknown): value is MarkdownDropAction {
-  return typeof value === "string" && Object.hasOwn(MARKDOWN_ACTION_LABELS, value);
+function isCanvasBindingAction(value: string): value is CanvasBindingAction {
+  return CANVAS_BINDING_ACTIONS.some((action) => action === value);
+}
+
+function isMarkdownBindingAction(value: string): value is MarkdownBindingAction {
+  return MARKDOWN_BINDING_ACTIONS.some((action) => action === value);
+}
+
+function isBindingModifier(value: unknown): value is BindingModifier {
+  return value === UNASSIGNED_MODIFIER || (typeof value === "string" && isModifierChord(value));
 }
 
 function isTouchDropAction(value: unknown): value is TouchDropAction {
@@ -194,6 +230,11 @@ export class DragDropSettingTab extends PluginSettingTab {
               },
             },
           },
+          {
+            name: "Surface Pen side-button drag",
+            desc: "Treat the Surface Pen side button as a left-button drag on a Markdown handle.",
+            control: { type: "toggle", key: "surfacePenSideButtonDrag" },
+          },
         ],
       },
       {
@@ -252,25 +293,27 @@ export class DragDropSettingTab extends PluginSettingTab {
       },
       {
         type: "group",
-        heading: "Canvas modifier actions",
-        items: MODIFIER_CHORDS.map((chord) => ({
-          name: CHORD_LABELS[chord],
+        heading: "Canvas actions",
+        items: CANVAS_BINDING_ACTIONS.map((action) => ({
+          name: CANVAS_ACTION_LABELS[action],
+          desc: "Choose the modifier used for this action. Selecting a modifier clears it from another action.",
           control: {
             type: "dropdown",
-            key: canvasBindingKey(chord),
-            options: CANVAS_ACTION_LABELS,
+            key: canvasActionKey(action),
+            options: MODIFIER_OPTIONS,
           },
         })),
       },
       {
         type: "group",
-        heading: "Markdown modifier actions",
-        items: MODIFIER_CHORDS.map((chord) => ({
-          name: CHORD_LABELS[chord],
+        heading: "Markdown actions",
+        items: MARKDOWN_BINDING_ACTIONS.map((action) => ({
+          name: MARKDOWN_ACTION_LABELS[action],
+          desc: "Choose the modifier used for this action. Selecting a modifier clears it from another action.",
           control: {
             type: "dropdown",
-            key: markdownBindingKey(chord),
-            options: MARKDOWN_ACTION_LABELS,
+            key: markdownActionKey(action),
+            options: MODIFIER_OPTIONS,
           },
         })),
       },
@@ -336,11 +379,15 @@ export class DragDropSettingTab extends PluginSettingTab {
   }
 
   private readControlValue(key: string): unknown {
-    const canvasChord = bindingChord(key, "canvasBindings.");
-    if (canvasChord !== undefined) return this.host.config.canvasBindings[canvasChord];
+    const canvasAction = canvasActionFromKey(key);
+    if (canvasAction !== undefined) {
+      return assignedModifierForAction(this.host.config.canvasBindings, canvasAction);
+    }
 
-    const markdownChord = bindingChord(key, "markdownBindings.");
-    if (markdownChord !== undefined) return this.host.config.markdownBindings[markdownChord];
+    const markdownAction = markdownActionFromKey(key);
+    if (markdownAction !== undefined) {
+      return assignedModifierForAction(this.host.config.markdownBindings, markdownAction);
+    }
 
     switch (key) {
       case "splitListItems":
@@ -363,24 +410,26 @@ export class DragDropSettingTab extends PluginSettingTab {
         return this.host.config.previewWidth;
       case "touchDropAction":
         return this.host.config.touchDropAction;
+      case "surfacePenSideButtonDrag":
+        return this.host.config.surfacePenSideButtonDrag;
       default:
         return undefined;
     }
   }
 
   private async writeControlValue(key: string, value: unknown): Promise<void> {
-    const canvasChord = bindingChord(key, "canvasBindings.");
-    if (canvasChord !== undefined) {
-      if (!isCanvasDropAction(value)) return;
-      this.host.config.canvasBindings[canvasChord] = value;
+    const canvasAction = canvasActionFromKey(key);
+    if (canvasAction !== undefined) {
+      if (!isBindingModifier(value)) return;
+      assignModifierToAction(this.host.config.canvasBindings, canvasAction, value);
       await this.host.saveSettings();
       return;
     }
 
-    const markdownChord = bindingChord(key, "markdownBindings.");
-    if (markdownChord !== undefined) {
-      if (!isMarkdownDropAction(value)) return;
-      this.host.config.markdownBindings[markdownChord] = value;
+    const markdownAction = markdownActionFromKey(key);
+    if (markdownAction !== undefined) {
+      if (!isBindingModifier(value)) return;
+      assignModifierToAction(this.host.config.markdownBindings, markdownAction, value);
       await this.host.saveSettings();
       return;
     }
@@ -433,6 +482,10 @@ export class DragDropSettingTab extends PluginSettingTab {
       case "touchDropAction":
         if (!isTouchDropAction(value)) return;
         this.host.config.touchDropAction = value;
+        break;
+      case "surfacePenSideButtonDrag":
+        if (typeof value !== "boolean") return;
+        this.host.config.surfacePenSideButtonDrag = value;
         break;
       default:
         return;

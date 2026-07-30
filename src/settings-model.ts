@@ -7,6 +7,7 @@ import type {
   TouchDropAction,
   TitleFilenameMode,
 } from "./model";
+import { MODIFIER_CHORDS } from "./model";
 
 export interface DragDropSettings {
   defaultFolder: string;
@@ -16,11 +17,38 @@ export interface DragDropSettings {
   nodeGap: number;
   previewWidth: number;
   touchDropAction: TouchDropAction;
+  surfacePenSideButtonDrag: boolean;
   splitListItems: boolean;
   listParentDisplay: ListParentDisplay;
   titleFilenameMode: TitleFilenameMode;
   canvasBindings: Record<ModifierChord, CanvasDropAction>;
   markdownBindings: Record<ModifierChord, MarkdownDropAction>;
+}
+
+export const UNASSIGNED_MODIFIER = "unassigned" as const;
+export type BindingModifier = ModifierChord | typeof UNASSIGNED_MODIFIER;
+
+export function assignedModifierForAction<T extends CanvasDropAction | MarkdownDropAction>(
+  bindings: Readonly<Record<ModifierChord, T>>,
+  action: Exclude<T, "inherit">,
+): BindingModifier {
+  return MODIFIER_CHORDS.find((chord) => bindings[chord] === action) ?? UNASSIGNED_MODIFIER;
+}
+
+export function assignModifierToAction<T extends CanvasDropAction | MarkdownDropAction>(
+  bindings: Record<ModifierChord, T>,
+  action: Exclude<T, "inherit">,
+  modifier: BindingModifier,
+): void {
+  for (const chord of MODIFIER_CHORDS) {
+    if (bindings[chord] === action) bindings[chord] = "inherit" as T;
+  }
+  if (modifier === UNASSIGNED_MODIFIER) return;
+
+  bindings[modifier] = action;
+  for (const chord of MODIFIER_CHORDS) {
+    if (chord !== modifier && bindings[chord] === action) bindings[chord] = "inherit" as T;
+  }
 }
 
 export const DEFAULT_SETTINGS: DragDropSettings = {
@@ -31,6 +59,7 @@ export const DEFAULT_SETTINGS: DragDropSettings = {
   nodeGap: 40,
   previewWidth: 400,
   touchDropAction: "link-source",
+  surfacePenSideButtonDrag: true,
   splitListItems: true,
   listParentDisplay: "native-subtree",
   titleFilenameMode: "auto",
@@ -86,6 +115,10 @@ export function mergeSettings(
   return {
     ...DEFAULT_SETTINGS,
     ...loadedSettings,
+    surfacePenSideButtonDrag:
+      typeof loaded?.surfacePenSideButtonDrag === "boolean"
+        ? loaded.surfacePenSideButtonDrag
+        : DEFAULT_SETTINGS.surfacePenSideButtonDrag,
     canvasBindings: {
       ...DEFAULT_SETTINGS.canvasBindings,
       ...loaded?.canvasBindings,

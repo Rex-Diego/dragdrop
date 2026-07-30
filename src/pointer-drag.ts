@@ -12,3 +12,9 @@ export function hasCrossedPointerDragThreshold(
 export function matchesPointerDrag(activePointerId: number, eventPointerId: number): boolean {
   return activePointerId === eventPointerId;
 }
+
+export function isSurfacePenSideButton(
+  event: Pick<PointerEvent, "pointerType" | "buttons">,
+): boolean {
+  return event.pointerType === "pen" && (event.buttons & 2) !== 0;
+}

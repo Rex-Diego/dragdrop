@@ -298,3 +298,11 @@
 - 修复拖拽启动时无关旧文字选区覆盖当前抓手的问题：只有选区覆盖当前抓手时才作为多选范围，否则使用抓手对应的完整块。
 - 当前验证：`npm.cmd run lint` 0 errors / 0 warnings，`npm.cmd run typecheck` 通过，`npm.cmd run test` 8 files / 57 tests 通过，`npm.cmd run build` 与 `node --check main.js` 通过。
 - 最新六个发布文件已同步到 `.obsidian/plugins/dragdrop` 与 `plugins-dev/plugin`；源码、标准安装目录和交付目录三方 SHA-256 全部一致，`main.js` 为 99,064 bytes。下一步由用户重载 Obsidian 后复测 Callout → Canvas。
+
+## 会话：2026-07-30（提交后设置页与 Surface Pen）
+
+- 已将阶段 6 基线提交为 `a98cbd1`（`feat: complete dragdrop stage 6 workflows`）并推送到 `origin/master`。
+- 设置页已从“修饰键行选择动作”改为“动作行选择修饰键”；存储协议不变，冲突组合自动清理，旧配置保持兼容。
+- 新增默认开启的 `Surface Pen side-button drag` 设置；仅在 Markdown 抓手上识别笔副按钮（`pointerType=pen` 且 `buttons & 2`），复用 Pointer capture 拖拽状态机，并使用 Canvas no-modifier 动作而不是 Touch drop action。
+- 新增设置映射与 Surface Pen 判断测试；当前 `npm.cmd run lint`、`npm.cmd run typecheck` 通过，`npm.cmd run test` 为 9 files / 61 tests 通过。
+- 下一步运行生产构建，部署六个发布文件，随后让用户在 Obsidian 设置页和 Surface Pen 上做实机验证。

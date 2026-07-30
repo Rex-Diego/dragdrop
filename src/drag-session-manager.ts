@@ -36,7 +36,11 @@ import {
   type TextChange,
 } from "./markdown-drop";
 import type { DragSession, SourceUnit } from "./model";
-import { hasCrossedPointerDragThreshold, matchesPointerDrag } from "./pointer-drag";
+import {
+  hasCrossedPointerDragThreshold,
+  isSurfacePenSideButton,
+  matchesPointerDrag,
+} from "./pointer-drag";
 import type { DragDropSettings } from "./settings-model";
 
 const SESSION_MIME = "application/x-dragdrop-session";
@@ -51,6 +55,7 @@ interface PointerDrag {
   view: EditorView;
   handle: HandleRange;
   element: HTMLElement;
+  surfacePenSideButton: boolean;
   startX: number;
   startY: number;
   active: boolean;
@@ -166,9 +171,13 @@ export class DragSessionManager extends Component implements DragStarter {
     handle: HandleRange,
     element: HTMLElement,
   ): void {
+    const supportedPointer = event.pointerType === "touch" || event.pointerType === "pen";
+    const sideButton = isSurfacePenSideButton(event);
     if (
-      !event.isPrimary ||
-      (event.pointerType !== "touch" && event.pointerType !== "pen")
+      !supportedPointer ||
+      (sideButton
+        ? !this.host.config.surfacePenSideButtonDrag
+        : !event.isPrimary)
     ) {
       return;
     }
@@ -181,6 +190,7 @@ export class DragSessionManager extends Component implements DragStarter {
       view,
       handle,
       element,
+      surfacePenSideButton: sideButton,
       startX: event.clientX,
       startY: event.clientY,
       active: false,
@@ -238,7 +248,11 @@ export class DragSessionManager extends Component implements DragStarter {
       this.cleanupDrag();
       return;
     }
-    await this.commitDrop(session, target, this.resolvePointerAction(event));
+    await this.commitDrop(
+      session,
+      target,
+      this.resolvePointerAction(event, pointerDrag.surfacePenSideButton),
+    );
   }
 
   cancelPointerDrag(pointerId: number): void {
@@ -344,8 +358,14 @@ export class DragSessionManager extends Component implements DragStarter {
     return chooseMarkdownDropPosition(rawPosition, event.clientY, boundaries) ?? rawPosition;
   }
 
-  private resolvePointerAction(event: PointerEvent): ReturnType<typeof resolveCanvasDropAction> {
+  private resolvePointerAction(
+    event: PointerEvent,
+    surfacePenSideButton: boolean,
+  ): ReturnType<typeof resolveCanvasDropAction> {
     if (event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) {
+      return resolveCanvasDropAction(event, this.host.config.canvasBindings);
+    }
+    if (surfacePenSideButton) {
       return resolveCanvasDropAction(event, this.host.config.canvasBindings);
     }
     return this.host.config.touchDropAction;

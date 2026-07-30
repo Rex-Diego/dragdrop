@@ -248,3 +248,10 @@
 - `content-segmentation.ts` 的 Callout 分块与 `canvas-reference.ts` 的引用规划已用该精确形状建立回归：最终 `subpath` 必须为 `#^2024-07-20-09-41-41`，且 `blockIdInsert` 未定义，源文件不会追加第二个 ID。
 - 拖拽启动时如果编辑器残留一个与当前抓手无关的非空文字选区，之前会优先采用该选区；现在只有当前选区覆盖抓手时才采用多选，否则使用抓手对应的完整块。这保留多块拖拽，同时避免 Callout 首行被旧选区绕开。
 - 当前静态验证：`npm.cmd run lint` 0 errors / 0 warnings，`npm.cmd run typecheck` 通过，`npm.cmd run test` 为 8 files / 57 tests 通过；仍需生产构建、部署和 Obsidian 实机复测。
+
+## 设置页与 Surface Pen 侧键（2026-07-30）
+
+- 修饰键设置页改为按动作列出下拉框：Canvas 显示 `Link to source block`、`Create note`、`Do nothing`，Markdown 显示 `Insert source embed`、`Move content`、`Do nothing`；每个动作选择一个修饰键，`Not assigned` 表示继承/未绑定。
+- 底层 `canvasBindings` / `markdownBindings` 数据结构保持不变，旧配置无需迁移；当两个动作选择同一个组合时，后选择的动作占用该组合，之前的动作自动恢复为 `inherit`。
+- 新增 `surfacePenSideButtonDrag`，默认开启。只有 Markdown 抓手收到 `pointerType === "pen" && (buttons & 2) !== 0` 时才将 Surface Pen 侧键视为左键拖拽；该输入使用 Canvas 的 no-modifier 动作，不走 Touch drop action。生命周期复用现有 `setPointerCapture()`、`pointerup`、`pointercancel` 路径，不监听或修改桌面普通右键。
+- 当前静态验证：`npm.cmd run lint` 0 errors / 0 warnings，`npm.cmd run typecheck` 通过，`npm.cmd run test` 为 9 files / 61 tests 通过；待生产构建、部署和实机验证。
