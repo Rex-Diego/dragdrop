@@ -254,4 +254,4 @@
 - 修饰键设置页改为按动作列出下拉框：Canvas 显示 `Link to source block`、`Create note`、`Do nothing`，Markdown 显示 `Insert source embed`、`Move content`、`Do nothing`；每个动作选择一个修饰键，`Not assigned` 表示继承/未绑定。
 - 底层 `canvasBindings` / `markdownBindings` 数据结构保持不变，旧配置无需迁移；当两个动作选择同一个组合时，后选择的动作占用该组合，之前的动作自动恢复为 `inherit`。
 - 新增 `surfacePenSideButtonDrag`，默认开启。只有 Markdown 抓手收到 `pointerType === "pen" && (buttons & 2) !== 0` 时才将 Surface Pen 侧键视为左键拖拽；该输入使用 Canvas 的 no-modifier 动作，不走 Touch drop action。生命周期复用现有 `setPointerCapture()`、`pointerup`、`pointercancel` 路径，不监听或修改桌面普通右键。
-- 当前静态验证：`npm.cmd run lint` 0 errors / 0 warnings，`npm.cmd run typecheck` 通过，`npm.cmd run test` 为 9 files / 61 tests 通过；待生产构建、部署和实机验证。
+- 当前静态验证：`npm.cmd run lint` 0 errors / 0 warnings，`npm.cmd run typecheck` 通过，`npm.cmd run test` 为 9 files / 61 tests 通过；生产构建、部署和三方 SHA-256 核对已完成，待实机验证。

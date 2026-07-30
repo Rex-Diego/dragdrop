@@ -305,4 +305,5 @@
 - 设置页已从“修饰键行选择动作”改为“动作行选择修饰键”；存储协议不变，冲突组合自动清理，旧配置保持兼容。
 - 新增默认开启的 `Surface Pen side-button drag` 设置；仅在 Markdown 抓手上识别笔副按钮（`pointerType=pen` 且 `buttons & 2`），复用 Pointer capture 拖拽状态机，并使用 Canvas no-modifier 动作而不是 Touch drop action。
 - 新增设置映射与 Surface Pen 判断测试；当前 `npm.cmd run lint`、`npm.cmd run typecheck` 通过，`npm.cmd run test` 为 9 files / 61 tests 通过。
-- 下一步运行生产构建，部署六个发布文件，随后让用户在 Obsidian 设置页和 Surface Pen 上做实机验证。
+- 已完成 `npm.cmd run build` 与 `node --check main.js`；六个发布文件已部署到 `.obsidian/plugins/dragdrop` 和 `plugins-dev/plugin`，三方 SHA-256 一致，`main.js` 为 101,808 bytes。
+- 后续改动已提交为 `07efdab`（`feat: simplify action settings and support Surface Pen drag`）并推送到 `origin/master`；待用户在 Obsidian 设置页和 Surface Pen 上做实机验证。
