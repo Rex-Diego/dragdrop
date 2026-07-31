@@ -100,6 +100,12 @@ export class CanvasSummaryFeature extends Component {
     this.observers.clear();
   }
 
+  refresh(): void {
+    for (const ownerDocument of this.observers.keys()) {
+      this.injectMenus(ownerDocument);
+    }
+  }
+
   private registerDocument(ownerDocument: Document): void {
     if (this.observers.has(ownerDocument)) return;
     const ownerWindow = ownerDocument.defaultView;
@@ -120,6 +126,15 @@ export class CanvasSummaryFeature extends Component {
   }
 
   private injectMenus(ownerDocument: Document): void {
+    if (!this.host.config.canvasSummaryButton) {
+      for (const button of Array.from(
+        ownerDocument.querySelectorAll<HTMLElement>(`.${SUMMARY_BUTTON_CLASS}`),
+      )) {
+        button.remove();
+      }
+      return;
+    }
+
     for (const menu of Array.from(
       ownerDocument.querySelectorAll<HTMLElement>(CANVAS_MENU_SELECTOR),
     )) {

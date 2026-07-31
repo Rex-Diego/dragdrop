@@ -257,3 +257,30 @@
 - 已检查本机 Obsidian 核心 `obsidian.asar`：Canvas 的 Pixi 入口严格要求 `isPrimary=true`、`button=0`、`pointerType="mouse"`，而空白画布的右键路径明确按 `button=2` 处理。由此锁定 Canvas 侧采用捕获阶段事件桥：阻止原始 pen 副按钮事件，向原始 Canvas target 派发完整的左键 PointerEvent 与 MouseEvent 序列，并在释放后的短窗口抑制 contextmenu；普通鼠标右键不满足 `pointerType="pen"`，不会进入该路径。
 - Canvas 桥的 Pointer capture、原始 `mousedown/mousemove/mouseup` 拦截、释放后的 contextmenu 抑制和插件卸载清理均已实现。初次补丁的空值收窄与无效类型断言已修复。
 - 当前静态验证：`npm.cmd run lint` 0 errors / 0 warnings，`npm.cmd run typecheck` 通过，`npm.cmd run test` 为 9 files / 61 tests 通过；生产构建、`node --check`、两个发布目录部署和六个文件三方 SHA-256 已完成，Surface 实机验证仍待用户重载后执行。
+
+## Surface Pen Canvas 事件桥诊断（2026-07-30）
+
+- 用户实机确认 Markdown 抓手的 Surface Pen 侧键拖拽可用，但 Canvas 卡片和空白区域均无响应；设置 `surfacePenSideButtonDrag` 已开启，规范源码、标准插件目录和 `plugins-dev/plugin` 的 `main.js` 均为 110,563 bytes 且 SHA-256 一致，因此当前问题不是设置或旧 bundle。
+- Obsidian 1.12.7 的 Canvas 拖动辅助函数会从初始 PointerEvent 的 `event.view` 注册后续 `pointermove`/`pointerup` 监听；当前 `dispatchCanvasPointerEvent()` 创建合成 PointerEvent/MouseEvent 时没有传 `view`，构造器默认得到 `null`。这会让 Canvas 拖动状态机在按下后无法建立后续监听，是当前首要根因。
+
+## Surface Pen Canvas 事件桥实施（2026-07-30）
+
+- 已在合成 Canvas PointerEvent/MouseEvent 中补齐目标窗口 `view`，并将事件监听提升到对应 owner window 的捕获阶段；Canvas 卡片和空白区域分别路由到 `.canvas-node-container` 与 `.canvas-wrapper`。
+- 卡片使用合成左键语义，空白区域使用合成中键语义以进入 Canvas 原生平移路径；Pointer capture、pointerup/pointercancel 配对和释放后的 contextmenu 抑制均在同一 Canvas 文档内处理，普通鼠标右键不受影响。
+- 代码验证已完成，但 Canvas 私有交互仍需用户在 Obsidian 中实机确认；不能把系统级 Windows Ink 右键圆圈的消失作为网页层可绝对保证的结果。
+- 当前测试只覆盖 `pointerType === "pen" && (buttons & 2) !== 0` 的纯分类判断，没有覆盖合成事件初始化、Canvas 目标路由、capture 和后续事件生命周期。
+- 现有桥在 `document` 捕获阶段监听；Canvas/Pixi 还会在 owner document 的捕获阶段监听 pointermove，事件顺序可能使原始笔右键先进入 Canvas。修复应将入口提升到对应 owner window 捕获阶段，并继续使用 `registerDomEvent()` 自动清理。
+- 当前原始 target 不保证是 Canvas 交互入口：Canvas 空白左键拖动要求 targetNode 正好是 `.canvas-wrapper`，卡片拖动应稳定落到对应 `.canvas-node-container`。桥接目标需要按“卡片/空白”归一化，不能直接派发到任意深层元素。
+- Obsidian Canvas 的原生语义是：卡片区域左键拖动，空白区域左键框选，中键/右键平移。因此本次实机验收将卡片定义为左键移动；空白区域采用原生平移语义，避免把“拖动画布”误实现成框选。普通鼠标右键仍必须保持原样。
+- Canvas 相关 DOM 拖动入口未发现 `isTrusted` 前置拒绝；只有在补齐 `view`、目标归一化和 Window 捕获后仍失败，才进入直接调用私有拖动控制器的后备方案。
+
+## Larger touch handles 设置（2026-07-30）
+
+- 将原先固定的 coarse-pointer 44 x 44 抓手改为 `largeTouchHandles` 设置，默认开启以保持既有 Surface 触控行为；关闭后恢复普通尺寸，但触控环境仍保持抓手可见并保留 `touch-action`。
+- 开关通过 workspace 主文档和已打开叶子的 owner document body class 生效，设置保存后立即刷新；新打开的 Obsidian 弹出窗口也会同步，不依赖重载。
+
+## Canvas 原子笔记按钮设置（2026-07-30）
+
+- 新增 `canvasSummaryButton` 设置，默认开启；关闭时移除所有已注入的 `.canvas-menu` 浮动按钮，开启时重新扫描并注入现有工具栏。
+- 命令面板的 `Create atomic note from canvas selection` 始终保留，作为按钮关闭或私有工具栏注入失败时的稳定兜底入口。
+- `CanvasSummaryFeature.refresh()` 由设置保存流程调用，切换无需重载；MutationObserver 继续负责后续 Canvas 工具栏重建。

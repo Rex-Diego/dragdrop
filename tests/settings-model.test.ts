@@ -36,4 +36,14 @@ describe("action-oriented modifier settings", () => {
     expect(mergeSettings(undefined).surfacePenSideButtonDrag).toBe(true);
     expect(mergeSettings({ surfacePenSideButtonDrag: false }).surfacePenSideButtonDrag).toBe(false);
   });
+
+  it("preserves the larger touch handle toggle when loading settings", () => {
+    expect(mergeSettings(undefined).largeTouchHandles).toBe(true);
+    expect(mergeSettings({ largeTouchHandles: false }).largeTouchHandles).toBe(false);
+  });
+
+  it("preserves the Canvas summary button toggle when loading settings", () => {
+    expect(mergeSettings(undefined).canvasSummaryButton).toBe(true);
+    expect(mergeSettings({ canvasSummaryButton: false }).canvasSummaryButton).toBe(false);
+  });
 });

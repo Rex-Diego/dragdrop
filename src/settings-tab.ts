@@ -42,7 +42,9 @@ type ScalarSettingKey =
   | "nodeGap"
   | "previewWidth"
   | "touchDropAction"
-  | "surfacePenSideButtonDrag";
+  | "surfacePenSideButtonDrag"
+  | "largeTouchHandles"
+  | "canvasSummaryButton";
 
 type CanvasBindingAction = Exclude<CanvasDropAction, "inherit">;
 type MarkdownBindingAction = Exclude<MarkdownDropAction, "inherit">;
@@ -235,6 +237,16 @@ export class DragDropSettingTab extends PluginSettingTab {
             desc: "Treat the Surface Pen side button as a left-button drag on a Markdown handle.",
             control: { type: "toggle", key: "surfacePenSideButtonDrag" },
           },
+          {
+            name: "Larger touch handles",
+            desc: "Use 44 x 44 touch targets for Markdown handles on coarse-pointer devices.",
+            control: { type: "toggle", key: "largeTouchHandles" },
+          },
+          {
+            name: "Canvas atomic note button",
+            desc: "Show the floating toolbar button for turning the current Canvas selection into an atomic note. The command remains available.",
+            control: { type: "toggle", key: "canvasSummaryButton" },
+          },
         ],
       },
       {
@@ -412,6 +424,10 @@ export class DragDropSettingTab extends PluginSettingTab {
         return this.host.config.touchDropAction;
       case "surfacePenSideButtonDrag":
         return this.host.config.surfacePenSideButtonDrag;
+      case "largeTouchHandles":
+        return this.host.config.largeTouchHandles;
+      case "canvasSummaryButton":
+        return this.host.config.canvasSummaryButton;
       default:
         return undefined;
     }
@@ -486,6 +502,14 @@ export class DragDropSettingTab extends PluginSettingTab {
       case "surfacePenSideButtonDrag":
         if (typeof value !== "boolean") return;
         this.host.config.surfacePenSideButtonDrag = value;
+        break;
+      case "largeTouchHandles":
+        if (typeof value !== "boolean") return;
+        this.host.config.largeTouchHandles = value;
+        break;
+      case "canvasSummaryButton":
+        if (typeof value !== "boolean") return;
+        this.host.config.canvasSummaryButton = value;
         break;
       default:
         return;

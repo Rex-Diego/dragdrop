@@ -310,9 +310,28 @@
 
 ## 会话：2026-07-30（Surface Pen Canvas 原生交互桥）
 
+- 用户说“开始行动”，正式进入上一轮诊断计划的实施阶段；当前锁定 `event.view` 缺失、document 捕获层级和 Canvas 目标归一化为本轮修复入口。
+- 空白 Canvas 的原生左键语义是框选而非平移；本轮卡片使用左键移动，空白区域使用 Canvas 原生平移语义，普通鼠标右键保持不变。
 - 用户确认：Surface Pen 从 Markdown 抓手拖到 Canvas 可以工作，但在 Canvas 卡片或空白区域按侧键拖动仍显示右键标识，既不能移动卡片也不能拖动画布。
 - 静态检查本机 Obsidian 核心源码后确认 Canvas 的 Pixi pointerdown 只接受 `pointerType="mouse"`、`isPrimary=true`、`button=0`；原始笔副按钮是 `button=2`，会进入右键路径。仅处理 Markdown 抓手不足以覆盖 Canvas 原生事件。
 - 在 `drag-session-manager.ts` 增加按 owner document 注册的 Canvas 侧键事件桥：捕获 `pointerdown/move/up/cancel` 与 `mousedown/move/up/contextmenu`，用 `setPointerCapture()` 保持会话，向同一 Canvas target 派发左键 Pointer/Mouse 序列，并在释放后的短窗口拦截 contextmenu；普通鼠标右键不受影响。
 - 另外补上 `cleanupDrag()` 的 Canvas capture 和状态清理，避免插件卸载、窗口关闭或其他拖拽启动后残留输入捕获。
 - 本轮首次检查遇到 `pointermove` 的可空状态收窄和两个无效 DOM 类型断言；改用局部状态、元素节点收窄后已解决。当前 `npm.cmd run lint`、`npm.cmd run typecheck`、`npm.cmd run test` 全部通过，测试为 9 files / 61 tests。
 - 已完成生产构建、`node --check main.js`、两个发布目录部署与六个发布文件三方 SHA-256 核对；`main.js` 当前为 110,563 bytes。之后需要用户重载 Obsidian，分别验证 Canvas 卡片拖动、空白画布拖动和右键圆圈消失。
+
+- 本轮已完成 `npm.cmd run lint`（0 errors / 0 warnings）、`npm.cmd run typecheck`、`npm.cmd run test`（9 files / 63 tests）、`npm.cmd run build` 和 `node --check main.js`；源码生成的 `main.js` 为 112,932 bytes。
+- 已将最新 `main.js` 部署到 `.obsidian/plugins/dragdrop` 与 `plugins-dev/plugin`，三个路径 SHA-256 一致；等待用户重载 Obsidian 后做 Canvas 卡片、空白画布和普通鼠标右键回归验证。
+
+## 会话：2026-07-30（大触控抓手设置）
+
+- 新增 `Larger touch handles` 设置，默认开启；关闭时 coarse-pointer 环境使用普通尺寸抓手，仍保持可见和可拖拽。
+- 设置变化会通过 workspace 各 owner document 的 body class 立即同步到主窗口和弹出窗口；README 与设置页说明已更新。
+- 最终验证：`npm.cmd run lint` 0 errors / 0 warnings、`npm.cmd run typecheck`、`npm.cmd run test`（9 files / 64 tests）、`npm.cmd run build` 和 `node --check main.js` 均通过。
+- 最新 `main.js` 与 `styles.css` 已部署到 `.obsidian/plugins/dragdrop` 和 `plugins-dev/plugin`；源码、标准插件目录和交付目录三方 SHA-256 均一致。Obsidian 设置页和 Surface 实机切换仍待用户验收。
+
+## 会话：2026-07-30（Canvas 原子笔记按钮设置）
+
+- 新增 `Canvas atomic note button` 设置，默认开启；关闭时隐藏浮动工具栏按钮，命令面板入口继续可用，重新开启会即时恢复按钮。
+- README 与设置页说明已更新，设置合并测试已补充。
+- 最终验证：`npm.cmd run lint` 0 errors / 0 warnings、`npm.cmd run typecheck`、`npm.cmd run test`（9 files / 65 tests）、`npm.cmd run build` 和 `node --check main.js` 均通过。
+- 最新 `main.js` 已部署到 `.obsidian/plugins/dragdrop` 与 `plugins-dev/plugin`，三个 bundle SHA-256 一致；等待 Obsidian 实机切换验证。

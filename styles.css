@@ -64,16 +64,20 @@
   }
 
   .markdown-source-view.mod-cm6 .dragdrop-handle-icon {
+    opacity: 1;
+  }
+
+  .dragdrop-large-touch-handles .markdown-source-view.mod-cm6 .dragdrop-handle-icon {
     width: 44px;
     height: 44px;
     opacity: 1;
   }
 
-  .markdown-source-view.mod-cm6 .dragdrop-gutter {
+  .dragdrop-large-touch-handles .markdown-source-view.mod-cm6 .dragdrop-gutter {
     min-width: 44px;
   }
 
-  .markdown-source-view.mod-cm6 .dragdrop-gutter .dragdrop-handle {
+  .dragdrop-large-touch-handles .markdown-source-view.mod-cm6 .dragdrop-gutter .dragdrop-handle {
     width: 44px;
     height: 44px;
   }

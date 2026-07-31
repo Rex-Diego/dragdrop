@@ -32,7 +32,7 @@ Markdown drops align to a destination block boundary. They do not perform outlin
 
 ### Canvas selection to atomic note
 
-Select one or more Canvas nodes and click the lightbulb button in the floating `.canvas-menu` toolbar. The same action is available as **Create atomic note from canvas selection** in the command palette if toolbar injection is unavailable.
+Select one or more Canvas nodes and click the lightbulb button in the floating `.canvas-menu` toolbar. The button is controlled by the **Canvas atomic note button** setting. The same action is always available as **Create atomic note from canvas selection** in the command palette if the button is disabled or toolbar injection is unavailable.
 
 The name prompt is required and starts with a neutral placeholder. File nodes become embeds using their existing file path and subpath, text nodes are written as-is, and entries follow visual order from top to bottom and then left to right. The original nodes remain on the Canvas; the newly created note is added as a new file node and selected.
 
@@ -55,7 +55,7 @@ On a Surface, touch or pen drag starts from the block handle after moving at lea
 
 When **Surface Pen side-button drag** is enabled, pressing the pen's side button on a Markdown handle starts the same captured drag path as a left-button drag and uses the no-modifier Canvas action. On Canvas itself, the plugin translates the pen side-button pointer and mouse sequence into a captured left-button sequence so cards and the Canvas surface receive the same input as a left-button drag. The check is limited to `pen` events with `buttons & 2`, so ordinary desktop right-click behavior is unchanged.
 
-Touch and pen drops support a Canvas in the same Obsidian window. Mouse dragging continues to support Canvas popout windows. The larger touch handle is enabled only for coarse-pointer environments, so normal editor scrolling and text selection remain unchanged outside the handle.
+Touch and pen drops support a Canvas in the same Obsidian window. Mouse dragging continues to support Canvas popout windows. **Larger touch handles** is enabled by default and uses 44 x 44 targets only in coarse-pointer environments; disable it to use standard-size handles. Normal editor scrolling and text selection remain unchanged outside the handle.
 
 ## Source content and generated notes
 

@@ -78,6 +78,9 @@
 - [x] 补 Canvas 归纳测试、更新 README，并准备 Obsidian 实机验证步骤
 - [x] 将设置页修饰键 UI 改为“按动作选择修饰键”，保留旧 `canvasBindings` / `markdownBindings` 存储并自动处理组合冲突
 - [x] 增加 Surface Pen 侧键拖拽开关，使用 `pen + buttons&2` 进入 Markdown 与 Canvas 的 Pointer capture 拖拽链路；Canvas 同时桥接左键 Pointer/Mouse 事件并抑制原始右键事件
+- [x] 修复 Surface Pen Canvas 事件桥：补齐合成事件 `view`、Window 捕获和卡片/空白 Canvas 目标路由
+- [x] 增加 `Larger touch handles` 设置开关，默认保留 44×44 触控抓手并支持运行时切换
+- [x] 增加 Canvas 浮动工具栏原子笔记按钮的设置开关，默认显示并支持运行时切换
 - [ ] 完成设置页与 Surface Pen 侧键的 Obsidian 实机验证
 - **状态：** in_progress
 

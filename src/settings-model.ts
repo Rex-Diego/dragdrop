@@ -18,6 +18,8 @@ export interface DragDropSettings {
   previewWidth: number;
   touchDropAction: TouchDropAction;
   surfacePenSideButtonDrag: boolean;
+  largeTouchHandles: boolean;
+  canvasSummaryButton: boolean;
   splitListItems: boolean;
   listParentDisplay: ListParentDisplay;
   titleFilenameMode: TitleFilenameMode;
@@ -60,6 +62,8 @@ export const DEFAULT_SETTINGS: DragDropSettings = {
   previewWidth: 400,
   touchDropAction: "link-source",
   surfacePenSideButtonDrag: true,
+  largeTouchHandles: true,
+  canvasSummaryButton: true,
   splitListItems: true,
   listParentDisplay: "native-subtree",
   titleFilenameMode: "auto",
@@ -119,6 +123,14 @@ export function mergeSettings(
       typeof loaded?.surfacePenSideButtonDrag === "boolean"
         ? loaded.surfacePenSideButtonDrag
         : DEFAULT_SETTINGS.surfacePenSideButtonDrag,
+    largeTouchHandles:
+      typeof loaded?.largeTouchHandles === "boolean"
+        ? loaded.largeTouchHandles
+        : DEFAULT_SETTINGS.largeTouchHandles,
+    canvasSummaryButton:
+      typeof loaded?.canvasSummaryButton === "boolean"
+        ? loaded.canvasSummaryButton
+        : DEFAULT_SETTINGS.canvasSummaryButton,
     canvasBindings: {
       ...DEFAULT_SETTINGS.canvasBindings,
       ...loaded?.canvasBindings,
