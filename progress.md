@@ -335,3 +335,67 @@
 - README 与设置页说明已更新，设置合并测试已补充。
 - 最终验证：`npm.cmd run lint` 0 errors / 0 warnings、`npm.cmd run typecheck`、`npm.cmd run test`（9 files / 65 tests）、`npm.cmd run build` 和 `node --check main.js` 均通过。
 - 最新 `main.js` 已部署到 `.obsidian/plugins/dragdrop` 与 `plugins-dev/plugin`，三个 bundle SHA-256 一致；等待 Obsidian 实机切换验证。
+
+## 会话：2026-07-31（阶段 7 可编辑块嵌入，仅规划）
+
+- 用户要求规划 Outliner.md 风格的 editable block embeds：在 `![[...#^block-id]]` 内编辑并同步修改原始块；随后补充该功能必须有设置开关。用户明确要求等其说“开始行动”后才能实施。
+- 按约定完整读取 `planning-with-files-zh`、仓库内 Obsidian 插件技能、三份规划文件，以及生命周期、类型安全、文件操作、CSS 与可访问性 reference。
+- 审查 Outliner 的 `patchEmbedView()`、`EmbeddedEditor`、私有 Markdown editor 原型、range decoration、block ID transaction filter、设置项和变更记录；确认其核心是全局 Markdown embed registry patch + 整篇编辑器隐藏范围 + debounce 整篇覆盖保存。
+- 锁定独立实现：第一版只支持 Markdown `#^block-id`，设置 `editableBlockEmbeds` 默认关闭并要求重载；静态原生渲染按需激活编辑器，block ID 不可变，保存按最新源内容重定位并进行冲突检测。
+- Outliner 源码为 FSL-1.1-Apache-2.0，仅作行为/API 参考，不复制源码或样式。
+- 规划阶段遇到三个只读工具问题：并行批次中 `rg` 无匹配返回 1、一次 PowerShell 引号未闭合、缺少本地 `asar` CLI；均已改为分项容错或移入实施阶段能力探针，没有安装依赖或修改源码。
+- 本轮只更新 `task_plan.md`、`findings.md`、`progress.md`；未修改源码、依赖、README、构建产物、实际插件目录，也未运行构建或部署。下一步等待用户明确说“开始行动”。
+
+## 会话：2026-07-31（阶段 7 开始实施）
+
+- 用户已明确说“开始行动”，阶段 7 从规划状态切换为 `in_progress`。
+- 保留 `editableBlockEmbeds` 默认关闭和重载生效的设置决策；先执行不写入真实源文件的 Obsidian 1.12.7 私有 API 能力探针。
+- 用户提供最新版 Obsidian 窗口后完成复核：实际版本为 `1.12.7`，通过刷新后的进程窗口句柄读取 DevTools 探针结果。
+- 探针确认 Markdown embed creator 接受三参数并返回可 `editable = true` / `showEditor()` / `unload()` 的原生组件，内部可取得 CodeMirror editor；没有修改 registry、编辑器或 Vault 文件。
+- 能力探针阶段完成，锁定“原生 Markdown embed/editor 包装 + 独立安全写回适配层”路径；下一步进入设置接线与纯函数 block 模型实现。
+- 新增 `editableBlockEmbeds` 设置，默认 `false`；设置页说明修改源块且需要重载，旧设置通过 `mergeSettings` 安全迁移。
+- 新增 `editable-block-embed-model.ts`：按最新文本定位唯一 block ID，排除 `![[...#^id]]` 内的伪 marker，支持 inline/standalone、段落、列表子树、引用与 Callout continuation，并拒绝基线冲突、重复/缺失/移动 ID。
+- 新增 `EditableBlockEmbedFeature`：仅在开关开启时可卸载地 patch 原生 Markdown embed creator；目标不支持或私有 API 初始化失败时保留原生 renderer。接入原生 `showEditor()` 后的 ID 保护、400ms 去抖写回、打开编辑器 transaction 与后台 `vault.process()` 两条路径。
+- 当前模型与设置测试共 10 个测试文件 / 74 个测试通过；本轮 typecheck 与 lint 通过。下一步修正生命周期细节并完成多实例/回退测试，再进行生产构建和最新版 Obsidian 部署。
+
+## 会话：2026-07-31（阶段 7 构建、部署与最新版窗口复核）
+
+- 核对最后补丁已应用：`loadFile(this.file)` 恢复路径、整篇编辑器中的 block 位置保护、编辑器 dispatch 校验失败时禁止继续写回均存在于源码。
+- 依次运行 `npm.cmd run lint`、`npm.cmd run typecheck`、`npm.cmd run test`、`npm.cmd run build`、`node --check main.js`：全部通过；测试为 10 个文件 / 74 个用例。
+- 将六个发布文件同步到 `.obsidian/plugins/dragdrop` 和 `plugins-dev/plugin`，三处 SHA-256 核对全部通过；保留 vault 中已有的 `data.json` 和 `graph-worker.js`。
+- Computer Use 重新确认唯一目标窗口为 Obsidian 1.12.7。输入动作在 DevTools 停靠状态下两次返回未知结果，恢复观察后未继续自动化输入，未完成 Obsidian 实机编辑验收。
+- 当前阶段仍为 `in_progress`：本地实现、构建和部署已完成；需要用户手动重载、开启开关并验证真实 Markdown 嵌入编辑流程。
+
+## 会话：2026-08-01（obsidian-dragger 借鉴规划开始）
+
+- 用户要求仔细规划 `Ariestar/obsidian-dragger` 的大部分功能如何并入当前 DragDrop，并明确只规划，等待其说“开始执行”后才能改代码。
+- 已完整读取 `planning-with-files-zh`、仓库内 Obsidian 插件技能和 GitHub 仓库导向技能；本轮不修改源码、不构建、不部署。
+- GitHub 只读核对确认上游为 MIT、最新发布 1.3.4；本仓库已有 `references/obsidian-dragger` 完整参考源码。下一步逐项读取 README/PRD/发布说明、设置、入口、拖拽管线和测试，形成阶段 8 功能矩阵与分批实施计划。
+- 已读取中文 README、manifest 和 package：确认用户功能、默认设置、移动端范围、跨文件移动开关及 `md-dragger` headless core 的公开边界。本地参考镜像是 1.3.4 发布提交，后续需另行核对上游 `main` 差异。
+- 只读检索发布说明时，Windows 下向 `rg` 直接传 `docs/release_notes/*.md` 失败；后续改用 `rg --files` 枚举，不重复该命令。
+- 已核对 1.2.3–1.3.4 发布演进及上游 `main`：当前 main 与本地 1.3.4 commit 一致。锁定不能直接照搬其 pointer-only 架构，因为当前插件仍需保留已实现的鼠标跨弹出窗口 HTML5 drag 链路。
+- 发布文档对 `enableCrossFileDrag` 默认值存在冲突；下一步以设置源码和迁移代码核定真实默认行为，并继续审查实际入口、拖拽 pipeline、跨文件事务、块类型转换和移动端命令。
+- 本次接续已完整重读三个规划文件、`planning-with-files-zh`、仓库内 Obsidian 技能及生命周期、文件操作、UI/UX、无障碍、CSS、类型安全 reference，并运行 session catch-up；确认工作区仍含阶段 7 的未提交实现，阶段 8 规划不得覆盖或回退这些用户资产。
+- 已由 `src/plugin/settings-types.ts` 核定真实默认值：`enableCrossFileDrag=true`、`enableMultiLineSelection=true`、移动端文本长按开启；长按/范围选择/自动滚动默认参数分别为 200ms、500ms、60px、12px。README 对跨文件默认值的描述不作为事实来源。
+- 枚举源码时误将不存在的 `references/obsidian-dragger/tests` 作为输入，`rg` 在列出完整 `src/` 文件后返回 1；已确认上游测试均与源码同置为 `*.spec.ts`，后续只检索 `src/`，不重复该路径错误。
+- 已读完 npm exports、架构边界测试和 headless pipeline 的 state/event/output/reducer/drop/exit 实现；确认可借鉴的是语义状态机与平台隔离，而不是用 pointer-only pipeline 一次性替换当前全部拖拽入口。
+- 读取 pipeline 批次因 PowerShell 启动和大输出两次超时，随后改为单文件、60 秒只读读取完成；未修改 reference 或业务源码。
+- 已审查 block/selection/command/transaction 公开模型与 `move-blocks`、delete、ordered-list renumber 实现；确认多块移动可用单一事务模型承载，但同文档无修饰键重排与现有无修饰键嵌入存在必须先解决的手势冲突。
+- 已读完 list mutation、插入/容器规则、同范围校验、block detector 和块类型转换 planner；发现上游 Callout detector 不覆盖本项目的 lazy continuation 规则，因此阶段 8 必须复用当前边界模型，不能直接替换。
+- 已审计当前项目模块与入口：`DragSessionManager` 已 1335 行并承载所有输入、目标与提交职责；阶段 8 计划将“先做有测试保护的职责抽取”列为 8.0，而不是继续向单类追加上游功能。
+- 已审查 drop preview、pointer hit-test/自动滚动、跨文件目标/写入器和折叠恢复；锁定可复用目标识别与算法，不复用上游无回滚的跨文件写入器，也不复制其全局 document/window 生命周期。
+- 已开始分段阅读 `DropTargetResolver` 与列表 resolver：确认落点解析、容器校验、自范围校验、横向缩进和父项高亮的先后关系。一次用 Windows 通配路径读取 `*.spec.ts` 再次触发路径错误，后续以 `Get-ChildItem` 或 `rg -g` 读取，不重复该形式。
+- 已读完两个 resolver 并枚举其行为测试；阶段 8 验收将以这些回归为基础，再叠加本项目已有 Callout、块嵌入、Canvas 与跨弹窗语义。
+- 已审查 pointer selection、range selection state、input guard、移动端 hit-test 及 input 测试目录；确认桌面多选和移动 selection mode 需要独立分批，并制定保留 HTML5 跨弹窗能力的 pointerdown/dragstart 计时仲裁方案。
+- 已读完上游块菜单、移动工具栏命令、插件入口、设置默认值和迁移；锁定只借鉴功能与 schema migration 模式，菜单和全局 DOM 生命周期必须按本项目标准独立实现，设置页采用功能分组和条件展示以避免再次膨胀。
+- 已审查上游设置结构、gutter handle、hover controller 和拖拽源高亮；决定保留当前已实机修复的 inline + Callout gutter 混合手柄，只在其上增加可配置视觉，不做底座替换。
+- 已核对双方 MIT LICENSE 与当前依赖；技术路径锁定为选择性移植纯模型、独立重写平台层，并在发生实质代码复用时加入 Ariestar 版权/来源 notices，不引入 `md-dragger` 运行时依赖。
+- 已复核 Copy/Cut/Delete 与 conversion 的平台实现；在计划中补入“clipboard 成功后删除”和 block ID 风险确认，并禁止对纯块嵌入执行类型转换。
+- 重新收敛动作冲突：阶段 8 不改变无修饰键嵌入 / Ctrl 搬移默认；Dragger 式结构语义只增强现有 `move` 动作。现有动作映射已经允许用户自行把 Move content 改为无修饰键，因此无需新增同文档特例 handler。
+- 已完成阶段 8 功能矩阵，将上游能力逐项标为保留、融合、延后或排除，并映射到 8.0–8.6；下一步把矩阵转成正式 task plan、测试门禁和实机验收步骤。
+- 已将阶段 8 正式写入 `task_plan.md`，按 8.0–8.7 串行拆分为：兼容基线/职责抽取、结构重排、桌面多选、块菜单、跨文件事务、视觉与折叠、移动端交互、完整交付。
+- 阶段 8 首批明确只做测试基线和行为等价职责抽取；在“一个事件序列最多提交一次”的仲裁门禁建立前，不接入新的 drop handler 或输入路径。
+- 已把本项目专属回归列为不可跨越门禁：无修饰键多嵌入、Ctrl/Cmd 多块整体搬移、同文件 offset、Callout lazy continuation、已有块嵌入、editable embed 编辑态、跨弹窗 HTML5、Surface Pen/touch、Canvas 路径与跨文件 rollback。
+- 已锁定设置提案和许可边界：设置按功能分组、条件展示并使用 schema migration；移动 selection mode 与有序列表重编号默认关闭；实质移植代码/测试时补 Ariestar MIT notices，不引入 `md-dragger` 运行时依赖。
+- 本轮只更新规划文件，没有修改业务源码、依赖、README、构建产物或部署目录，也没有运行 lint/typecheck/test/build。阶段 7 的未提交实现完整保留，等待用户明确说“开始执行”后才进入 8.0。
+- 只读恢复时，并行读取大体量技能/规划文件在 10 秒限制下超时 1 次，随后改为分批完整读取；末次检索误传不存在的 `README_zh.md` 导致 `rg` 返回 1，但有效匹配已保留，未发生写入或重复失败操作。

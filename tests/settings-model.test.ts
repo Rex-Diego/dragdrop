@@ -46,4 +46,9 @@ describe("action-oriented modifier settings", () => {
     expect(mergeSettings(undefined).canvasSummaryButton).toBe(true);
     expect(mergeSettings({ canvasSummaryButton: false }).canvasSummaryButton).toBe(false);
   });
+
+  it("keeps editable block embeds disabled unless explicitly enabled", () => {
+    expect(mergeSettings(undefined).editableBlockEmbeds).toBe(false);
+    expect(mergeSettings({ editableBlockEmbeds: true }).editableBlockEmbeds).toBe(true);
+  });
 });

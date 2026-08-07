@@ -20,6 +20,7 @@ export interface DragDropSettings {
   surfacePenSideButtonDrag: boolean;
   largeTouchHandles: boolean;
   canvasSummaryButton: boolean;
+  editableBlockEmbeds: boolean;
   splitListItems: boolean;
   listParentDisplay: ListParentDisplay;
   titleFilenameMode: TitleFilenameMode;
@@ -64,6 +65,7 @@ export const DEFAULT_SETTINGS: DragDropSettings = {
   surfacePenSideButtonDrag: true,
   largeTouchHandles: true,
   canvasSummaryButton: true,
+  editableBlockEmbeds: false,
   splitListItems: true,
   listParentDisplay: "native-subtree",
   titleFilenameMode: "auto",
@@ -131,6 +133,10 @@ export function mergeSettings(
       typeof loaded?.canvasSummaryButton === "boolean"
         ? loaded.canvasSummaryButton
         : DEFAULT_SETTINGS.canvasSummaryButton,
+    editableBlockEmbeds:
+      typeof loaded?.editableBlockEmbeds === "boolean"
+        ? loaded.editableBlockEmbeds
+        : DEFAULT_SETTINGS.editableBlockEmbeds,
     canvasBindings: {
       ...DEFAULT_SETTINGS.canvasBindings,
       ...loaded?.canvasBindings,

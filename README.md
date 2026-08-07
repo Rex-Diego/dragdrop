@@ -30,6 +30,12 @@ When a dragged block is already a standalone embed such as `![[Books/Source#^abc
 
 Markdown drops align to a destination block boundary. They do not perform outline indentation, folding, or list restructuring.
 
+### Editable block embeds
+
+The optional **Editable block embeds** setting adds a pencil button to Markdown block embeds such as `![[Source note#^block-id]]`. Activating the button opens the native Markdown embed editor and writes changes back to that exact source block. The `^block-id` marker is protected and cannot be removed, moved, or renamed.
+
+This setting is disabled by default and requires an Obsidian reload after it changes. It only applies to Markdown block embeds in Live Preview and Reading mode; whole-file or heading embeds, Canvas nodes, backlinks, search results, Excalidraw, nested editable embeds, and same-file self-references keep their native behavior. Changes are checked against the latest source block, so a concurrent edit is rejected instead of overwriting newer content.
+
 ### Canvas selection to atomic note
 
 Select one or more Canvas nodes and click the lightbulb button in the floating `.canvas-menu` toolbar. The button is controlled by the **Canvas atomic note button** setting. The same action is always available as **Create atomic note from canvas selection** in the command palette if the button is disabled or toolbar injection is unavailable.
@@ -134,6 +140,7 @@ The settings tab includes:
 - Markdown actions, each with its assigned modifier (`Insert source embed`, `Move content`, or `Do nothing`)
 - Surface Pen side-button drag
 - Canvas selection to atomic note from the floating toolbar or command palette
+- Editable block embeds (disabled by default; requires an Obsidian reload)
 
 Canvas and Markdown actions use separate modifier mappings. Choose a modifier from the action row; assigning a modifier to one action clears that modifier from another action in the same group. The default Markdown mapping is no modifier = embed and Ctrl/Command = move.
 
@@ -144,6 +151,7 @@ Canvas and Markdown actions use separate modifier mappings. Choose a modifier fr
 - Touch and pen require the Canvas private APIs used for coordinate lookup and node creation. If those APIs are unavailable, DragDrop cancels the drop before changing the Markdown source.
 - The drop target and node creation flow use Obsidian's private Canvas API, so Obsidian updates may require compatibility changes.
 - The floating toolbar button uses private `.canvas-menu` DOM observation. If that toolbar changes, the command palette fallback remains available and the rest of the plugin continues to work.
+- Editable block embeds use the private Markdown embed registry and native widget editor. If the private API is unavailable, the original embed renderer remains in place.
 - Surface Pen side-button drag uses Pointer Events and `setPointerCapture()` on Markdown handles and Canvas elements in the current Obsidian window. Disable it in settings if the pen side button should keep its normal context-menu behavior.
 - The manifest currently declares Obsidian 1.5.11 as the minimum version. Development uses the Obsidian 1.13.1 type surface; verify older desktop versions before relying on them.
 - Markdown → Markdown dragging is supported only between Markdown editors; it does not restructure list indentation or outline hierarchy.
@@ -157,6 +165,7 @@ Depending on the selected action, DragDrop may:
 - Create folders and Markdown notes in the vault
 - Add file or text nodes to the target Canvas
 - Move a Markdown block to another editable Markdown note when Ctrl/Command is held and all safety checks pass, regardless of folder
+- When **Editable block embeds** is enabled, directly modify the selected source block after the user presses the embed pencil button
 
 It does not send vault content over the network.
 

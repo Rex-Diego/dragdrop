@@ -1,4 +1,5 @@
 import {
+  Notice,
   PluginSettingTab,
   Setting,
   type App,
@@ -44,7 +45,8 @@ type ScalarSettingKey =
   | "touchDropAction"
   | "surfacePenSideButtonDrag"
   | "largeTouchHandles"
-  | "canvasSummaryButton";
+  | "canvasSummaryButton"
+  | "editableBlockEmbeds";
 
 type CanvasBindingAction = Exclude<CanvasDropAction, "inherit">;
 type MarkdownBindingAction = Exclude<MarkdownDropAction, "inherit">;
@@ -247,6 +249,11 @@ export class DragDropSettingTab extends PluginSettingTab {
             desc: "Show the floating toolbar button for turning the current Canvas selection into an atomic note. The command remains available.",
             control: { type: "toggle", key: "canvasSummaryButton" },
           },
+          {
+            name: "Editable block embeds",
+            desc: "Allow editing a Markdown block inside ![[file#^block-id]] embeds and write changes back to the original block. Requires an Obsidian reload.",
+            control: { type: "toggle", key: "editableBlockEmbeds" },
+          },
         ],
       },
       {
@@ -428,6 +435,8 @@ export class DragDropSettingTab extends PluginSettingTab {
         return this.host.config.largeTouchHandles;
       case "canvasSummaryButton":
         return this.host.config.canvasSummaryButton;
+      case "editableBlockEmbeds":
+        return this.host.config.editableBlockEmbeds;
       default:
         return undefined;
     }
@@ -511,6 +520,12 @@ export class DragDropSettingTab extends PluginSettingTab {
         if (typeof value !== "boolean") return;
         this.host.config.canvasSummaryButton = value;
         break;
+      case "editableBlockEmbeds":
+        if (typeof value !== "boolean") return;
+        this.host.config.editableBlockEmbeds = value;
+        await this.host.saveSettings();
+        new Notice("Reload Obsidian to apply editable block embeds.");
+        return;
       default:
         return;
     }
