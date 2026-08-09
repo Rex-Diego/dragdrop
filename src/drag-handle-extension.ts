@@ -1,6 +1,6 @@
 import { RangeSetBuilder, StateField } from "@codemirror/state";
 import type { EditorState, Extension, RangeSet } from "@codemirror/state";
-import { Decoration, EditorView, GutterMarker, gutter, WidgetType } from "@codemirror/view";
+import { Decoration, Direction, EditorView, GutterMarker, gutter, WidgetType } from "@codemirror/view";
 import type { DecorationSet } from "@codemirror/view";
 import { setIcon } from "obsidian";
 import { buildHandleRanges } from "./content-segmentation";
@@ -87,6 +87,12 @@ class DragHandleGutterMarker extends GutterMarker {
 
 const hoveredGutterHandles = new WeakMap<EditorView, HTMLElement>();
 const calloutGutterOffsets = new WeakMap<HTMLElement, number>();
+const calloutAlignmentMeasureKey = {};
+
+interface CalloutGutterAlignment {
+  marker: HTMLElement;
+  offset: number;
+}
 
 function elementFromEventTarget(target: EventTarget | null): Element | null {
   if (!target || typeof target !== "object" || !("nodeType" in target)) return null;
@@ -153,9 +159,17 @@ function createGutterHoverExtension(): Extension {
   });
 }
 
-function alignCalloutGutterHandles(view: EditorView): void {
+function calloutGutterAlignments(view: EditorView): CalloutGutterAlignment[] {
   const contentRect = view.contentDOM.getBoundingClientRect();
-  const right = view.dom.ownerDocument.body?.classList.contains("dragdrop-handles-right") ?? false;
+  const handlesRight = view.dom.ownerDocument.body?.classList.contains("dragdrop-handles-right") ?? false;
+  const rtl = view.textDirection === Direction.RTL;
+  const side = handlesRight === rtl ? "right" : "left";
+  const ownerWindow = view.dom.ownerDocument.defaultView;
+  const gap = Number.parseFloat(
+    ownerWindow?.getComputedStyle(view.dom).getPropertyValue("--size-4-1") ?? "",
+  ) || 4;
+  const alignments: CalloutGutterAlignment[] = [];
+
   for (const marker of view.dom.findAll(".dragdrop-gutter-marker")) {
     const handle = marker.querySelector<HTMLElement>(".dragdrop-handle[data-dragdrop-handle-kind='callout']");
     if (!handle) continue;
@@ -164,26 +178,31 @@ function alignCalloutGutterHandles(view: EditorView): void {
     const previousOffset = calloutGutterOffsets.get(marker) ?? 0;
     const from = Number(handle.dataset.dragdropHandleFrom ?? 0);
     const coords = view.coordsAtPos(from);
-    const leftTarget = coords?.left ?? contentRect.left;
-    const nextOffset = calloutGutterOffset(right ? "right" : "left", {
-      contentLeft: contentRect.left,
-      contentRight: contentRect.right,
-      lineStart: leftTarget,
+    const nextOffset = calloutGutterOffset(side, {
+      lineLeft: coords?.left ?? contentRect.left,
+      lineRight: coords?.right ?? contentRect.right,
       markerLeft: markerRect.left,
       markerRight: markerRect.right,
       previousOffset,
+      gap,
     });
-
-    marker.style.setProperty("--dragdrop-callout-offset-x", `${nextOffset}px`);
-    calloutGutterOffsets.set(marker, nextOffset);
+    alignments.push({ marker, offset: nextOffset });
   }
+
+  return alignments;
 }
 
 function scheduleCalloutGutterAlignment(view: EditorView): void {
   view.requestMeasure({
-    read: () => null,
-    write: () => {
-      if (view.dom.isConnected) alignCalloutGutterHandles(view);
+    key: calloutAlignmentMeasureKey,
+    read: (measuredView) => calloutGutterAlignments(measuredView),
+    write: (alignments, measuredView) => {
+      if (!measuredView.dom.isConnected) return;
+      for (const { marker, offset } of alignments) {
+        if (!marker.isConnected) continue;
+        marker.style.setProperty("--dragdrop-callout-offset-x", `${offset}px`);
+        calloutGutterOffsets.set(marker, offset);
+      }
     },
   });
 }

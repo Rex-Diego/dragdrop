@@ -65,8 +65,13 @@ export interface MarkdownMoveBlock extends TextRange {
 
 type RemovalRange = TextRange;
 
-export function requiresMoveConfirmation(units: readonly SourceUnit[]): boolean {
-  return units.some((unit) => unit.existingBlockId !== undefined);
+export type MoveConfirmationContext = "same-file" | "cross-file" | "destructive-edit";
+
+export function requiresMoveConfirmation(
+  units: readonly SourceUnit[],
+  context: MoveConfirmationContext = "destructive-edit",
+): boolean {
+  return context !== "same-file" && units.some((unit) => unit.existingBlockId !== undefined);
 }
 
 function normalizedRanges(content: string, ranges: readonly TextRange[]): TextRange[] {

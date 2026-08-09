@@ -65,7 +65,7 @@
 | 冲突 modal 打开后聚焦输入框，按钮使用原生 ButtonComponent | 满足焦点管理与键盘操作要求 |
 | 增加社区扫描器等价的 ESLint flat config，并修复 warnings | 在开发阶段提前符合发布规范 |
 | ESLint 采用 `obsidianmd.configs.recommended` + type-aware project，并主动开启 `prefer-active-doc` | 与社区扫描器一致且覆盖跨窗口规则 |
-| ESLint 不忽略 package.json，只忽略 node_modules、main.js 和 mjs 构建脚本 | 让依赖扫描发现可替换或受限包 |
+| ESLint 不忽略 package.json，只忽略 node_modules 和 mjs 构建脚本；发布仓库不能忽略 main.js | 让依赖扫描发现可替换或受限包，同时确保 BRAT 能取得构建产物 |
 | 所有 fire-and-forget Promise 显式 `void`，DOM 回调不直接使用 async | 满足 no-floating-promises 与 no-misused-promises |
 | 定时器绑定具体 owner window 并使用该 window 的 timer API | 弹出窗口兼容且避免 bare timer 规则 |
 | 设置 Dropdown 回调先接收 string 再在内部缩窄 | 兼容 Obsidian 组件的宽泛 callback 类型 |
@@ -284,6 +284,47 @@
 - 新增 `canvasSummaryButton` 设置，默认开启；关闭时移除所有已注入的 `.canvas-menu` 浮动按钮，开启时重新扫描并注入现有工具栏。
 - 命令面板的 `Create atomic note from canvas selection` 始终保留，作为按钮关闭或私有工具栏注入失败时的稳定兜底入口。
 - `CanvasSummaryFeature.refresh()` 由设置保存流程调用，切换无需重载；MutationObserver 继续负责后续 Canvas 工具栏重建。
+
+## 用户新增回归与阶段 8.7 收口决策（2026-08-09，仅规划）
+
+### Callout 抓手的正文对齐
+
+- 当前普通块使用 inline widget，Callout 使用 CodeMirror `GutterMarker`；gutter 的实际最小宽度使其锚定在编辑器外侧，页边距变宽时不会跟随正文内容起点。
+- 保留现有 Callout gutter、lazy-continuation 分块和共享拖拽事件，不改成 pointer-only 或全局 DOM 监听。执行时增加按 `EditorView`/owner document 管理的几何适配：以当前可见 Callout 行的内容坐标为锚，给 marker/零宽 overlay 设置可重算的横向偏移，使其与普通 inline handle 在 `handlePosition` left/right 下共用同一正文列。
+- 几何刷新必须覆盖 viewport/geometry 变化、编辑器滚动、宽度变化、主题/RTL、嵌套 Live Preview 和弹出窗口；使用 view 的 owner window/document，清理时解除 observer/animation frame。粗指针的 44×44 命中区、hover/focus 可见性和键盘/ARIA 语义保持不变。
+
+### 缺失 block ID 的行末写回
+
+- `ensurePlannedReference()` 当前对未显式指定 inline 的复杂块默认生成 `\n^id`。新的 placement resolver 以“当前逻辑块最后一个非空内容行的行末”为首选插入点，并在写入前只移除该行尾部空白，不另起 marker 行。
+- 普通段落、单/多行列表项、引用和 Callout（包括首行带语法、后续无 `>` 的 lazy continuation）默认使用 ` ^id` inline；已有 inline/standalone ID 原样复用，绝不重复追加。Callout 的 ID 归属仍优先使用 opening line/现有逻辑块 ID。
+- fenced code、math、table 等 inline 会改变语法或 Obsidian 识别范围的块，以及显式 `blockIdPlacement: "standalone"` 的 native-subtree 列表父项，保留 standalone 作为安全例外；该边界要以测试证明并写入 README，不能静默破坏结构。若后续确认这些语法也要求 inline，再单独调整决策，不在本批猜测。
+- 规划和批量倒序插入必须继续保证多块 offset 不漂移；Canvas、Markdown→Markdown、原子笔记和 editable embed 的 block ID 定位都复用同一 placement 结果。
+
+### 同文件与跨文件 Markdown 动作设置
+
+- 新增独立 `sameMarkdownBindings`（八个 `ModifierChord`），保留 `markdownBindings` 作为跨 Markdown/文件目标的兼容存储字段。两组默认均为 `none = embed-source`、`primary = move`，其余为 `inherit`；Canvas 与 touch action 不改变。
+- 设置 schema 递增时，旧数据没有 `sameMarkdownBindings` 就深拷贝旧 `markdownBindings`，非法动作/缺失 chord 回退默认值；两组绑定各自执行“一个 chord 只能占一个动作”的冲突清理，不能互相清理。
+- 设置页按“Markdown → 同一文件”和“Markdown → 不同文件/文件目标”分别列出 Embed、Move、Do nothing 三个动作的 modifier 下拉框，覆盖无修饰键、Ctrl/Command、Shift、Alt 及全部组合，并明确显示当前默认值。
+- 动作解析上下文由规范化源/目标 `TFile.path` 决定，而不是 `EditorView` 实例：同文件分栏走 same-file；不同文件、文件树和内部链接走 cross-file。dragover/drop 缓存必须同时带 context、源/目标 path、owner document 和 modifier chord；目标切换或修饰键改变即重新解析，避免沿用旧动作。
+
+### 同文件 Ctrl/Command Move 的 selection 与视图不变式
+
+- 在同文件 Move（包括用户把 Ctrl/Command 绑定到 Move 的情况）提交前捕获源 `EditorView` 的完整 selection ranges、焦点状态、`scrollDOM.scrollTop/scrollLeft` 和 owner window。该快照也作为异常/rollback 的恢复基线。
+- 优先把结构化 move 结果落实为一个精确 CodeMirror changes transaction；若仍需从 planner 结果生成变化，则用 `mapPositionAfterMove()`/`mapPositionAfterRemovals()` 映射每个 anchor/head，dispatch 时显式传入 selection，禁止整篇替换触发默认首行 selection/scroll。
+- 提交后在同一 owner window 的 measure/animation frame 中恢复滚动（按新 scroll 范围 clamp）和原焦点；原光标在被移动块内时随块映射到目标位置，块外时只做删除/插入 offset 映射，不强制跳到文首或抢焦点。不同分栏仍只写源 view，不能给目标 view 额外聚焦。
+- 任何 preflight 失败、用户取消、事务异常或 rollback 都必须恢复 selection、scroll 和 focus；成功后保留一次 undo 事务。需要覆盖中间位置拖到首/尾、多块/非连续选区、折叠块、同文件双栏和弹出窗口。
+
+### 本轮执行边界
+
+- 本轮只完成只读审查和计划记录，没有修改业务源码、依赖、构建产物或部署目录，也不宣称上述四项已修复。用户明确说“开始执行”后，才按 `task_plan.md` 的 8.7 顺序实施并逐批验证。
+
+## 阶段 8.7 首批实施决策（2026-08-09）
+
+- `sameMarkdownBindings` 已加入设置模型，schema 从 1 升到 2；旧配置缺少新字段时复制旧 `markdownBindings`，两组绑定独立做 modifier 冲突清理。动作解析以 same-file/cross-file context 选择映射，dragover 缓存同时记录 owner document、源/目标路径和 chord 语义。
+- 缺失 ID 的 inline placement 统一在行尾空白之前插入 ` ^<id>`，因此正文与 block ID 之间始终只有一个空格；Callout lazy continuation 改为最终逻辑行 inline。代码/数学/表格和显式 standalone 结构仍保留语法安全例外。
+- 新增 editor view snapshot，保存 selection ranges、焦点和 `scrollDOM` 横纵滚动；同文件 Move 的整篇事务提交后使用现有 move/removal 映射恢复 selection，并用 CodeMirror `requestMeasure` 恢复滚动，rollback 也恢复快照。
+- Callout gutter 保留原有 marker 底座，通过 owner editor 的几何测量和 CSS custom property 平移 marker；使用 WeakMap 抵消上次平移，避免重复 measure 累积偏移。动态样式仅用于视图几何 overlay，颜色/尺寸仍由 `styles.css` 和 Obsidian CSS 变量控制。
+- 当前新增纯模型/回归测试覆盖 action migration/context、inline ID 空格与 Callout 末行、selection mapping、Callout gutter offset；定向测试已通过，当前尚未做 Obsidian 实机验收或最终 build/deploy。
 
 ## 阶段 7：可编辑块嵌入规划（2026-07-31）
 
@@ -520,3 +561,21 @@
 
 - 移动端长按选择必须与现有 Pointer drag 共享同一 `PointerDrag` 状态，而不是再挂一套 document-level listener：pointerdown 先 capture，200ms 内跨过 8px 阈值就直接启动拖拽；计时器先到则切换为 selection mode，后续 pointermove 只刷选 handle，pointerup 清理状态并保留选区。
 - `mobileBlockInteractions` 默认关闭，原因是用户已有 Surface/触控路径，必须先保证旧行为不变；开启后仍复用 `multiBlockSelection`、`Larger touch handles`、Surface Pen 开关和原有 cleanup。resize handles 与移动工具栏另批实现，不能在设置说明中声称已经提供。
+
+### 阶段 8.7 收口决策（2026-08-09）
+
+- Callout 抓手继续复用现有 gutter/lazy-continuation 渲染链，仅在 owner editor 的测量阶段计算水平偏移；偏移计算以未变换的 marker 几何为基准，重复测量不会累积。
+- Obsidian inline block ID 的规范写回格式锁定为 `正文 ^<id>`：插入点位于逻辑末行尾随空白之前，保证正文和 ID 之间恰好一个空格；代码、数学、表格和 native-subtree 的 standalone 例外不变。
+- 同文件动作映射与跨文件映射独立保存；拖拽期间修饰键改变时必须重新解析，不能复用先前 chord 的缓存动作。
+- 同文件 Move 的视图快照包括每个 selection range、焦点以及 owner `scrollDOM` 的横纵滚动；映射后若 selection 重叠则合并为合法的 CodeMirror selection。
+- 自动化验证和三方发布文件哈希已通过；Obsidian 实机行为仍是未完成验收项，不因构建通过而标记完成。
+
+### 阶段 8.7 最终体验收口（2026-08-10）
+
+- Callout 抓手上一版未生效的直接根因是把 `coordsAtPos()` 放在 CodeMirror `requestMeasure.write` 阶段，运行时抛出 `Reading the editor layout`。最终实现将几何读取与 CSS offset 写入严格拆到 read/write 两阶段，并按普通抓手相对正文的实际左右边缘计算；临时实机诊断中 Callout 左边缘约为 x=336、抓手约为 x=317，确认已从页面最左侧移到正文旁。诊断标题代码已从源码删除，最终 bundle 也已验证不含 `DBG` 或 `document.title`。
+- 设置页本地化以 `moment.locale()` 识别 Obsidian 当前语言，原因是 manifest 仍支持 1.5.11，而 `getLanguage()` 需要更高版本。当前完整覆盖英文与简体中文；中文地区代码统一使用简体中文，其他语言回退清晰英文。
+- 原 `Do nothing` 容易让用户误解为永久禁用或无反馈，最终显示名锁定为 `Cancel this drop` / `取消本次拖放`，含义是本次 drop 被取消且不修改源或目标。
+- 同文件 Move 不改变文件路径或 block ID，因此已有 ID 不再触发引用风险确认；跨文件 Move、菜单 Cut/Delete 等真正可能破坏引用的动作继续确认。
+- 用户最终明确只借鉴 obsidian-dragger 的拖拽能力，不需要右键 Convert。所有转换菜单、planner 和测试均已删除；原生块菜单只保留 Copy/Cut/Delete。内部 `blockTypeMenu` 字段仅作为已有 `data.json` 的 schema 兼容键，用户可见名称改为 `Block action menu` / `块操作菜单`。
+- 最终质量基线为 ESLint 0 warning、TypeScript 通过、20 个测试文件 / 112 个用例通过、production build 与 `node --check main.js` 通过。六个发布文件在源码、`.obsidian/plugins/dragdrop` 和 `plugins-dev/plugin` 三处 SHA-256 一致；`data.json` 与 `graph-worker.js` 未被覆盖。
+- 最终实机重载时 Windows 会话处于锁屏状态，前台进程明确为 `LockApp`。未尝试解锁、重启 Obsidian 或关闭用户工作区；当前旧窗口标题仍是中间诊断 bundle 的遗留状态，不能据此判断最终 bundle 仍含诊断代码，解锁后需重载主工作区再做最终视觉与交互验收。

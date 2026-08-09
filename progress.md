@@ -473,3 +473,64 @@
 - 移动 selection mode 不新增 document 级 pointer listener，也不触碰 Surface Pen 侧键路径；resize handles、拖拽模式切换和移动工具栏命令仍未实现，避免把半成品伪装成完整移动端能力。
 - 运行 lint/typecheck/test/build/node check：全部通过，18 个测试文件 / 102 个用例，0 lint warning。
 - 已将 `manifest.json`、`main.js`、`styles.css` 同步到 `.obsidian/plugins/dragdrop` 与 `plugins-dev/plugin`；三处文件的 SHA-256 均一致。没有覆盖两个目标目录中的 `data.json` 或其他用户文件。
+
+## 会话：2026-08-09（新增回归需求，仅制定计划）
+
+- 用户新增四项体验要求：宽页边距下 Live Preview Callout 抓手必须与正文起点对齐；缺失 block ID 默认写到当前逻辑块最后一行行末；同一 Markdown 内拖拽的无修饰键、Ctrl/Command 和其他 modifier chord 必须与跨 Markdown 一样在设置页独立配置；同文件 Ctrl/Command 剪切式拖动后不得把光标/阅读视图跳回首行。
+- 已按仓库 `AGENTS.md` 要求重新核对当前唯一项目目录，并完整读取 `planning-with-files-zh` 主 skill、仓库内 Obsidian 插件开发主 skill 以及现有三个规划文件；本轮没有读取或修改迁移前目录。
+- 只读审查确认影响面：`src/drag-handle-extension.ts`/`styles.css` 的 Callout gutter 具有真实最小宽度；`src/block-reference.ts` 的复杂块默认使用 standalone 插入；`src/settings-model.ts`/`src/settings-tab.ts` 只有一组 `markdownBindings`；`src/drag-session-manager.ts` 的同文档 Move/跨文件事务仍有整篇 dispatch `{ from: 0, to: doc.length, insert: after }`，会重置 CodeMirror selection/scroll。现有 `src/markdown-drop.ts` 的位置映射函数可作为恢复基础。
+- 已将实施入口锁定到阶段 8.7 收口，保留 8.0→8.6 已完成资产和阶段 7 的安全写回/ID 保护边界：先做 action context/设置迁移与纯模型回归，再做 ID placement、Callout 几何适配、同文件 selection/scroll 事务，最后进行全套质量检查和 Obsidian 分批实机验收。
+- 已更新 `task_plan.md`、`findings.md`、`progress.md` 记录上述决策、迁移策略、安全例外、视图不变式和验收门禁；没有修改业务源码、依赖、README、构建产物、部署目录，也没有运行 lint/typecheck/test/build。等待用户明确说“开始执行”。
+- 只读过程中一次并行大文件读取超过 shell 10 秒限制，随后改为分批读取完成；未造成工作区写入或状态变化。
+
+## 会话：2026-08-09（阶段 8.7 开始执行）
+
+- 用户明确说“开始执行”，阶段 8.7 从规划切换为 `in_progress`；特别锁定 block ID 与正文之间必须保留一个空格。
+- 执行前基线通过：`npm.cmd run lint`、`npm.cmd run typecheck`、`npm.cmd run test`（18 files / 102 tests）和 `npm.cmd run build`；尚未修改业务源码。
+- 当前第一批入口为同文件/跨文件动作上下文与设置迁移，随后处理 block ID placement、同文件 selection/scroll 恢复和 Callout 几何对齐。
+
+### 阶段 8.7 首批源码实施
+
+- `settings-model.ts` 新增 `sameMarkdownBindings` 并将 schema 升至 2；旧数据迁移会复制原 Markdown 映射，默认同文件和跨文件均保持无修饰键 embed、Primary move。
+- `settings-tab.ts` 分别显示同文件与不同文件/文件目标的 Markdown 动作；`action-resolution.ts` 新增 context resolver；`DragSessionManager` 的 dragover/drop action cache 现在带 context、源/目标路径和 owner document。
+- `block-reference.ts` 新增安全 inline placement：段落、列表、引用、Callout 取最后逻辑行的尾部空白前位置，插入文本固定以一个空格开头；新增 Callout lazy continuation 与尾随空白回归。
+- 新增 `editor-view-state.ts`，同文件 Move 前捕获 selection/focus/scroll，提交后用 `mapPositionAfterMove` 或 removal mapping 恢复，失败时恢复未映射快照。
+- `drag-handle-extension.ts` 与 `styles.css` 为 Callout gutter 增加 owner editor geometry measure 和 CSS offset；新增 `callout-handle-position.ts` 纯函数测试，覆盖宽页边距左/右对齐。
+- 已通过定向测试（39 + 4 tests）、typecheck 和 lint；目前未进行最终全量质量命令、生产 build、部署或 Obsidian 实机复测。
+
+### 2026-08-09：阶段 8.7 自动化收口与部署
+
+- 完成阶段 8.7 首批实现：Callout gutter 依据 owner editor 几何对齐正文起点；缺失 block ID 对普通段落、列表、引用和 Callout 写回为当前逻辑块最后一行的 `正文 ^id`，正文与 ID 之间保留一个空格，代码/数学/表格/native-subtree 保留 standalone 安全例外。
+- 同 Markdown 与跨 Markdown 动作绑定已分离并覆盖全部 modifier chord；旧 `markdownBindings` 配置会迁移到新字段。拖拽动作缓存现在同时校验上下文、源/目标路径、owner document 与当前 modifier chord。
+- 同文件 Move/ Ctrl 剪切会保存并映射恢复 CodeMirror selection、焦点及 owner `scrollDOM` 滚动位置；映射后的重叠 selection 会安全合并，失败时恢复原快照。
+- 最终质量命令全部通过：lint、typecheck、Vitest 20 files / 110 tests、production build、`node --check main.js`，无 lint warning。
+- 已将 `manifest.json`、`main.js`、`styles.css`、`README.md`、`LICENSE`、`versions.json` 部署到 `.obsidian/plugins/dragdrop` 与 `plugins-dev/plugin`；两处与规范源码逐项 SHA-256 一致，未覆盖目标目录的 `data.json` 或其他用户资产。
+- 仍待用户在 Obsidian 实机分批验收：宽页边距 Callout、各类 block ID 写回、同/跨 Markdown modifier 设置，以及同文件 Ctrl/Command 拖动后的光标/焦点/滚动位置。
+
+### 2026-08-09：BRAT 公开发布
+
+- 为让 GitHub/BRAT 能取得构建产物，已从 `.gitignore` 移除 `main.js`；重新构建后的 218,555-byte bundle 与当前已验证源码一并提交为 `c696556`（`Release BRAT-installable 0.1.0 build`）。
+- 已依次重新通过 `npm.cmd run lint`、`npm.cmd run typecheck`、`npm.cmd run test`（20 files / 110 tests）、`npm.cmd run build` 和 `node --check main.js`；README 已加入 BRAT 安装地址与 Release artifact 说明。
+- 用户授权后已快进推送 `master` 与开发分支，公开 `https://github.com/Rex-Diego/dragdrop`，并创建正式 GitHub Release `0.1.0`。匿名 GitHub API 和下载检查确认 Release 不是 draft/prerelease，包含 `manifest.json`（235 bytes）、`main.js`（218,555 bytes）和 `styles.css`（6,995 bytes）。
+- 本次公开发布不代表阶段 8 的 Obsidian 实机验收完成；其未完成项继续保留在既有阶段检查清单中。
+
+## 会话：2026-08-10（阶段 8.7 最终体验收口）
+
+- 按 `AGENTS.md` 完整重读 `task_plan.md`、`findings.md`、`progress.md`、`planning-with-files-zh`、仓库内 Obsidian skill，并按本次范围读完 UI/UX、CSS、无障碍和文件操作 reference；同时读取 Computer Use skill。
+- 审查并确认本轮源码：Callout 几何读取已拆到 CodeMirror measure read 阶段；设置页新增英文/中文完整文案；`Do nothing` 改为 `Cancel this drop` / `取消本次拖放`；同文件 Move 不再确认；Convert 模块、菜单入口和对应测试已删除，仅保留 Copy/Cut/Delete。
+- 依次通过 `npm.cmd run lint`、`npm.cmd run typecheck`、`npm.cmd run test`、`npm.cmd run build` 与 `node --check main.js`；ESLint 无 warning，Vitest 为 20 files / 112 tests。
+- 最终 `main.js` 为 229,041 bytes，SHA-256 为 `23B32D82BE9DF18A3E58AA50A7E79B717A4D6DAD82B4CE74C172B67C53253C40`；残留扫描确认不含 `DBG`、`document.title`、Convert 菜单或转换实现。
+- 已将 `manifest.json`、`main.js`、`styles.css`、`README.md`、`LICENSE`、`versions.json` 同步到 `.obsidian/plugins/dragdrop` 与 `plugins-dev/plugin`；六个文件三方 SHA-256 全部一致，目标目录中的 `data.json` 和 `graph-worker.js` 仍存在。
+- Computer Use skill 要求的 `sky.documentation()` 在已安装 `@oai/sky` 中不存在；改读包内完整 `docs/sky-window2-api.md`。窗口枚举正常，但通过当前嵌套工具上下文读取状态或发送输入均返回 `node_repl exec context not found`。
+- 关闭单独的设置窗口后，Windows 原生 `SetForegroundWindow`、PostMessage、Alt 前台切换、AttachThreadInput 与 UI Automation 均未向 Obsidian 主窗口误发按键；最终确认系统前台进程是 `LockApp`，即 Windows 会话已锁定。按安全边界未尝试解锁、重启 Obsidian 或关闭用户工作区。
+- 因锁屏无法完成最终重载与截图验收。源码、bundle 和部署均已收口；解锁后只需重载 Obsidian 主工作区，再复核 Callout 抓手贴近正文、中文设置、“取消本次拖放”、同文件 Move 无确认，以及右键菜单没有 Convert。
+
+### 本轮错误记录
+
+| 错误 | 尝试次数 | 解决方案 |
+|------|---------|---------|
+| 首次并行完整读取技能/规划文件超过 10 秒返回上限 | 1 | 分批完整读取到 EOF，未发生写入 |
+| `sky.documentation` 在当前 Computer Use 运行时不存在 | 1 | 读取已安装包 `docs/sky-window2-api.md`；记录版本不匹配，不伪造文档接口 |
+| 最终残留扫描中 `rg` 无匹配返回 1，使并行 wrapper 退出 | 1 | 显式将“无匹配”作为成功结果重新核对 |
+| PowerShell 窗口枚举的 `foreach` 后直接管道产生 empty pipe ParserError | 1 | 先收集 `$rows` 再输出，窗口信息核对完成 |
+| Obsidian 后台重载无法获得前台焦点 | 1 | 确认前台为 `LockApp` 后停止；不绕过锁屏、不重启用户应用，保留实机项待解锁后完成 |

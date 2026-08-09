@@ -1,4 +1,5 @@
 import {
+  moment,
   Notice,
   PluginSettingTab,
   Setting,
@@ -26,6 +27,7 @@ import {
   type BindingModifier,
   type DragDropSettings,
 } from "./settings-model";
+import { settingsTextForLanguage, type SettingsText } from "./settings-i18n";
 
 interface SettingsHost {
   config: DragDropSettings;
@@ -83,22 +85,6 @@ type DragDropSettingGroup = Omit<SettingDefinitionGroup<SettingKey>, "items" | "
   items: DragDropSettingDefinition[];
 };
 
-const CHORD_LABELS: Record<ModifierChord, string> = {
-  none: "No modifier",
-  primary: "Ctrl / Command",
-  shift: "Shift",
-  alt: "Alt or Option",
-  "primary+shift": "Ctrl / Command + Shift",
-  "primary+alt": "Ctrl / Command + Alt or Option",
-  "shift+alt": "Shift + Alt or Option",
-  "primary+shift+alt": "Ctrl / Command + Shift + Alt or Option",
-};
-
-const MODIFIER_OPTIONS: Record<BindingModifier, string> = {
-  [UNASSIGNED_MODIFIER]: "Not assigned",
-  ...CHORD_LABELS,
-};
-
 const CANVAS_BINDING_ACTIONS: CanvasBindingAction[] = [
   "link-source",
   "create-note",
@@ -111,19 +97,35 @@ const MARKDOWN_BINDING_ACTIONS: MarkdownBindingAction[] = [
   "none",
 ];
 
-const CANVAS_ACTION_LABELS: Record<CanvasDropAction, string> = {
-  inherit: "Use no-modifier action",
-  "link-source": "Link to source block",
-  "create-note": "Create note",
-  none: "Do nothing",
-};
+function modifierOptions(text: SettingsText): Record<BindingModifier, string> {
+  return {
+    [UNASSIGNED_MODIFIER]: text.modifierUnassigned,
+    none: text.modifierNone,
+    primary: text.modifierPrimary,
+    shift: text.modifierShift,
+    alt: text.modifierAlt,
+    "primary+shift": text.modifierPrimaryShift,
+    "primary+alt": text.modifierPrimaryAlt,
+    "shift+alt": text.modifierShiftAlt,
+    "primary+shift+alt": text.modifierAll,
+  };
+}
 
-const MARKDOWN_ACTION_LABELS: Record<MarkdownDropAction, string> = {
-  inherit: "Use no-modifier action",
-  move: "Move content",
-  "embed-source": "Insert source embed",
-  none: "Do nothing",
-};
+function canvasActionLabel(action: CanvasBindingAction, text: SettingsText): string {
+  switch (action) {
+    case "link-source": return text.canvasLinkAction;
+    case "create-note": return text.canvasCreateAction;
+    case "none": return text.cancelDropAction;
+  }
+}
+
+function markdownActionLabel(action: MarkdownBindingAction, text: SettingsText): string {
+  switch (action) {
+    case "embed-source": return text.markdownEmbedAction;
+    case "move": return text.markdownMoveAction;
+    case "none": return text.cancelDropAction;
+  }
+}
 
 function canvasActionKey(action: CanvasBindingAction): CanvasActionSettingKey {
   return `canvasAction.${action}`;
@@ -210,106 +212,108 @@ export class DragDropSettingTab extends PluginSettingTab {
   }
 
   private getSettingGroups(): DragDropSettingGroup[] {
+    const text = settingsTextForLanguage(moment.locale());
+    const modifiers = modifierOptions(text);
     const canvasActionItems: DragDropSettingDefinition[] = CANVAS_BINDING_ACTIONS.map((action) => ({
-      name: `Canvas: ${CANVAS_ACTION_LABELS[action]}`,
-      desc: "Choose the modifier used for this action. Selecting a modifier clears it from another action.",
+      name: `${text.canvasScope}: ${canvasActionLabel(action, text)}`,
+      desc: text.canvasActionDescription,
       control: {
         type: "dropdown",
         key: canvasActionKey(action),
-        options: MODIFIER_OPTIONS,
+        options: modifiers,
       },
     }));
     const markdownActionItems: DragDropSettingDefinition[] = MARKDOWN_BINDING_ACTIONS.map((action) => ({
-      name: `Markdown (different file): ${MARKDOWN_ACTION_LABELS[action]}`,
-      desc: "Choose the modifier used for this action when the target is another Markdown file or file target.",
+      name: `${text.crossMarkdownScope}: ${markdownActionLabel(action, text)}`,
+      desc: text.crossMarkdownActionDescription,
       control: {
         type: "dropdown",
         key: markdownActionKey(action),
-        options: MODIFIER_OPTIONS,
+        options: modifiers,
       },
     }));
     const sameMarkdownActionItems: DragDropSettingDefinition[] = MARKDOWN_BINDING_ACTIONS.map((action) => ({
-      name: `Markdown (same file): ${MARKDOWN_ACTION_LABELS[action]}`,
-      desc: "Choose the modifier used for this action when source and target are in the same Markdown file.",
+      name: `${text.sameMarkdownScope}: ${markdownActionLabel(action, text)}`,
+      desc: text.sameMarkdownActionDescription,
       control: {
         type: "dropdown",
         key: sameMarkdownActionKey(action),
-        options: MODIFIER_OPTIONS,
+        options: modifiers,
       },
     }));
 
     return [
       {
         type: "group",
-        heading: "Core behavior",
+        heading: text.headingCoreBehavior,
         items: [
           {
-            name: "Folder strategy",
-            desc: "Choose where notes created by drag and drop are stored.",
+            name: text.folderStrategyName,
+            desc: text.folderStrategyDescription,
             control: {
               type: "dropdown",
               key: "folderStrategy",
               options: {
-                fixed: "Fixed folder",
-                source: "Source note folder",
-                canvas: "Canvas folder",
+                fixed: text.folderFixed,
+                source: text.folderSource,
+                canvas: text.folderCanvas,
               },
             },
           },
           ...(this.host.config.folderStrategy === "fixed"
             ? [{
-                name: "Fixed folder",
-                desc: "Used when the folder strategy is fixed. Missing folders are created automatically.",
+                name: text.fixedFolderName,
+                desc: text.fixedFolderDescription,
                 control: {
                   type: "text" as const,
                   key: "defaultFolder" as const,
-                  placeholder: "Folder/path",
+                  placeholder: text.fixedFolderPlaceholder,
                 },
               }]
             : []),
           {
-            name: "Heading file names",
-            desc: "Use cleaned heading text automatically or ask every time a heading creates a note.",
+            name: text.headingFileNamesName,
+            desc: text.headingFileNamesDescription,
             control: {
               type: "dropdown",
               key: "titleFilenameMode",
               options: {
-                auto: "Use heading text",
-                prompt: "Always ask",
+                auto: text.headingFileNamesAuto,
+                prompt: text.headingFileNamesPrompt,
               },
             },
           },
           {
-            name: "Structural Markdown moves",
-            desc: "Use list-aware sibling, child and outdent behavior when the Markdown action is Move content.",
+            name: text.structuralMovesName,
+            desc: text.structuralMovesDescription,
             control: { type: "toggle", key: "structuralMarkdownMoves" },
           },
         ],
       },
       {
         type: "group",
-        heading: "Selection",
+        heading: text.headingSelection,
         items: [
           {
-            name: "Split list items",
-            desc: "Create one canvas card for every list item in the dragged range.",
+            name: text.splitListItemsName,
+            desc: text.splitListItemsDescription,
             control: { type: "toggle", key: "splitListItems" },
           },
           {
-            name: "Multi-block selection",
-            desc: "Allow Shift+handle range selection and desktop long-press brushing before dragging.",
+            name: text.multiBlockSelectionName,
+            desc: text.multiBlockSelectionDescription,
             control: { type: "toggle", key: "multiBlockSelection" },
           },
           ...(this.host.config.splitListItems
             ? [{
-                name: "List parent display",
-                desc: "Native subtree uses a file node. Self only uses a linked text node when a parent has children.",
+                name: text.listParentDisplayName,
+                desc: text.listParentDisplayDescription,
                 control: {
                   type: "dropdown" as const,
                   key: "listParentDisplay" as const,
                   options: {
-                    "native-subtree": "Native subtree",
-                    "self-only": "Self only",
+                    "native-subtree": text.listParentNative,
+                    "self-only": text.listParentSelf,
                   },
                 },
               }]
@@ -318,126 +322,129 @@ export class DragDropSettingTab extends PluginSettingTab {
       },
       {
         type: "group",
-        heading: "Appearance",
+        heading: text.headingAppearance,
         items: [
           {
-            name: "Node width",
-            desc: "Fixed width for created Canvas nodes.",
+            name: text.nodeWidthName,
+            desc: text.nodeWidthDescription,
             control: { type: "number", key: "nodeWidth", min: 160, max: 1_200, step: 1 },
           },
           {
-            name: "Initial node height",
-            desc: "Height used until rendered content is measured.",
+            name: text.initialNodeHeightName,
+            desc: text.initialNodeHeightDescription,
             control: { type: "number", key: "initialNodeHeight", min: 80, max: 1_200, step: 1 },
           },
           {
-            name: "Vertical gap",
-            desc: "Space between cards created by one drop.",
+            name: text.verticalGapName,
+            desc: text.verticalGapDescription,
             control: { type: "number", key: "nodeGap", min: 0, max: 400, step: 1 },
           },
           {
-            name: "Drag preview width",
-            desc: "Width of the transparent Markdown preview that follows the pointer.",
+            name: text.previewWidthName,
+            desc: text.previewWidthDescription,
             control: { type: "number", key: "previewWidth", min: 200, max: 1_000, step: 1 },
           },
           {
-            name: "Handle position",
-            desc: "Place Markdown block handles on the left or right side of the editor line.",
+            name: text.handlePositionName,
+            desc: text.handlePositionDescription,
             control: {
               type: "dropdown",
               key: "handlePosition",
-              options: { left: "Left", right: "Right" },
+              options: { left: text.handleLeft, right: text.handleRight },
             },
           },
           {
-            name: "Handle visibility",
-            desc: "Show handles only on hover/focus or keep them visible while editing.",
+            name: text.handleVisibilityName,
+            desc: text.handleVisibilityDescription,
             control: {
               type: "dropdown",
               key: "handleVisibility",
-              options: { hover: "Hover or focus", always: "Always visible" },
+              options: {
+                hover: text.handleVisibilityHover,
+                always: text.handleVisibilityAlways,
+              },
             },
           },
           {
-            name: "Canvas atomic note button",
-            desc: "Show the floating toolbar button for turning the current Canvas selection into an atomic note. The command remains available.",
+            name: text.canvasSummaryButtonName,
+            desc: text.canvasSummaryButtonDescription,
             control: { type: "toggle", key: "canvasSummaryButton" },
           },
         ],
       },
       {
         type: "group",
-        heading: "Mobile and pen",
+        heading: text.headingMobilePen,
         items: [
           {
-            name: "Touch drop action",
-            desc: "Used for finger or pen drops without a keyboard modifier.",
+            name: text.touchDropActionName,
+            desc: text.touchDropActionDescription,
             control: {
               type: "dropdown",
               key: "touchDropAction",
               options: {
-                "link-source": "Link to source block",
-                "create-note": "Create note",
-                none: "Do nothing",
+                "link-source": text.canvasLinkAction,
+                "create-note": text.canvasCreateAction,
+                none: text.cancelDropAction,
               },
             },
           },
           {
-            name: "Surface Pen side-button drag",
-            desc: "Treat the Surface Pen side button as a left-button drag on a Markdown handle.",
+            name: text.surfacePenName,
+            desc: text.surfacePenDescription,
             control: { type: "toggle", key: "surfacePenSideButtonDrag" },
           },
           {
-            name: "Larger touch handles",
-            desc: "Use 44 x 44 touch targets for Markdown handles on coarse-pointer devices.",
+            name: text.largerTouchHandlesName,
+            desc: text.largerTouchHandlesDescription,
             control: { type: "toggle", key: "largeTouchHandles" },
           },
           {
-            name: "Mobile block interactions",
-            desc: "After a 200 ms long press, brush across Markdown handles to select blocks; short movement still starts a drag.",
+            name: text.mobileInteractionsName,
+            desc: text.mobileInteractionsDescription,
             control: { type: "toggle", key: "mobileBlockInteractions" },
           },
         ],
       },
       {
         type: "group",
-        heading: "Advanced",
+        heading: text.headingAdvanced,
         items: [
           {
-            name: "Editable block embeds",
-            desc: "Allow editing a Markdown block inside ![[file#^block-id]] embeds and write changes back to the original block. Requires an Obsidian reload.",
+            name: text.editableEmbedsName,
+            desc: text.editableEmbedsDescription,
             control: { type: "toggle", key: "editableBlockEmbeds" },
           },
           {
-            name: "Block type menu",
-            desc: "Show the Markdown block menu with Copy, Cut, Delete and safe type conversions.",
+            name: text.blockMenuName,
+            desc: text.blockMenuDescription,
             control: { type: "toggle", key: "blockTypeMenu" },
           },
           {
-            name: "Cross-file file targets",
-            desc: "Allow dropping onto Markdown files in the file tree or internal links to append at the end.",
+            name: text.crossFileTargetsName,
+            desc: text.crossFileTargetsDescription,
             control: { type: "toggle", key: "crossFileFileTargets" },
           },
           {
-            name: "Edge auto-scroll",
-            desc: "Scroll the Markdown editor while a drag is held near its edge.",
+            name: text.edgeAutoScrollName,
+            desc: text.edgeAutoScrollDescription,
             control: { type: "toggle", key: "edgeAutoScroll" },
           },
           {
-            name: "Preserve fold state",
-            desc: "Restore heading and list folds after a structural move when CodeMirror can still fold the destination.",
+            name: text.preserveFoldStateName,
+            desc: text.preserveFoldStateDescription,
             control: { type: "toggle", key: "preserveFoldState" },
           },
           {
-            name: "Renumber ordered lists after Move",
-            desc: "Recalculate contiguous ordered-list markers after a structural move. Off keeps every marker verbatim.",
+            name: text.renumberListsName,
+            desc: text.renumberListsDescription,
             control: { type: "toggle", key: "renumberOrderedLists" },
           },
           ...(this.host.config.edgeAutoScroll
             ? [
                 {
-                  name: "Auto-scroll edge zone",
-                  desc: "Distance from the editor edge at which scrolling begins.",
+                  name: text.autoScrollEdgeName,
+                  desc: text.autoScrollEdgeDescription,
                   control: {
                     type: "number" as const,
                     key: "autoScrollEdgePx" as const,
@@ -447,8 +454,8 @@ export class DragDropSettingTab extends PluginSettingTab {
                   },
                 },
                 {
-                  name: "Auto-scroll maximum speed",
-                  desc: "Maximum scroll speed in pixels per animation frame.",
+                  name: text.autoScrollSpeedName,
+                  desc: text.autoScrollSpeedDescription,
                   control: {
                     type: "number" as const,
                     key: "autoScrollMaxSpeed" as const,
@@ -697,7 +704,7 @@ export class DragDropSettingTab extends PluginSettingTab {
         if (typeof value !== "boolean") return;
         this.host.config.editableBlockEmbeds = value;
         await this.host.saveSettings();
-        new Notice("Reload Obsidian to apply editable block embeds.");
+        new Notice(settingsTextForLanguage(moment.locale()).reloadEditableEmbedsNotice);
         return;
       case "structuralMarkdownMoves":
         if (typeof value !== "boolean") return;

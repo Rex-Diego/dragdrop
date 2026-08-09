@@ -122,5 +122,11 @@ describe("Markdown drop planning", () => {
   it("detects existing block IDs before a move confirmation", () => {
     expect(requiresMoveConfirmation([block(0, 5, "plain")])).toBe(false);
     expect(requiresMoveConfirmation([block(0, 5, "plain", "quoted")] )).toBe(true);
+    expect(
+      requiresMoveConfirmation([block(0, 5, "plain", "quoted")], "same-file"),
+    ).toBe(false);
+    expect(
+      requiresMoveConfirmation([block(0, 5, "plain", "quoted")], "cross-file"),
+    ).toBe(true);
   });
 });

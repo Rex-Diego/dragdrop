@@ -396,8 +396,7 @@ function lineEndForUnit(state, unit) {
 function calloutGutterOffset(side, geometry) {
   const baseLeft = geometry.markerLeft - geometry.previousOffset;
   const baseRight = geometry.markerRight - geometry.previousOffset;
-  const target = side === "right" ? geometry.contentRight : geometry.lineStart ?? geometry.contentLeft;
-  return target - (side === "right" ? baseRight : baseLeft);
+  return side === "right" ? geometry.lineRight + geometry.gap - baseLeft : geometry.lineLeft - geometry.gap - baseRight;
 }
 
 // src/drag-handle-extension.ts
@@ -434,6 +433,7 @@ var DragHandleGutterMarker = class _DragHandleGutterMarker extends import_view.G
 };
 var hoveredGutterHandles = /* @__PURE__ */ new WeakMap();
 var calloutGutterOffsets = /* @__PURE__ */ new WeakMap();
+var calloutAlignmentMeasureKey = {};
 function elementFromEventTarget(target) {
   if (!target || typeof target !== "object" || !("nodeType" in target)) return null;
   const node = target;
@@ -487,9 +487,16 @@ function createGutterHoverExtension() {
     }
   });
 }
-function alignCalloutGutterHandles(view) {
+function calloutGutterAlignments(view) {
   const contentRect = view.contentDOM.getBoundingClientRect();
-  const right = view.dom.ownerDocument.body?.classList.contains("dragdrop-handles-right") ?? false;
+  const handlesRight = view.dom.ownerDocument.body?.classList.contains("dragdrop-handles-right") ?? false;
+  const rtl = view.textDirection === import_view.Direction.RTL;
+  const side = handlesRight === rtl ? "right" : "left";
+  const ownerWindow2 = view.dom.ownerDocument.defaultView;
+  const gap = Number.parseFloat(
+    ownerWindow2?.getComputedStyle(view.dom).getPropertyValue("--size-4-1") ?? ""
+  ) || 4;
+  const alignments = [];
   for (const marker of view.dom.findAll(".dragdrop-gutter-marker")) {
     const handle = marker.querySelector(".dragdrop-handle[data-dragdrop-handle-kind='callout']");
     if (!handle) continue;
@@ -497,24 +504,29 @@ function alignCalloutGutterHandles(view) {
     const previousOffset = calloutGutterOffsets.get(marker) ?? 0;
     const from = Number(handle.dataset.dragdropHandleFrom ?? 0);
     const coords = view.coordsAtPos(from);
-    const leftTarget = coords?.left ?? contentRect.left;
-    const nextOffset = calloutGutterOffset(right ? "right" : "left", {
-      contentLeft: contentRect.left,
-      contentRight: contentRect.right,
-      lineStart: leftTarget,
+    const nextOffset = calloutGutterOffset(side, {
+      lineLeft: coords?.left ?? contentRect.left,
+      lineRight: coords?.right ?? contentRect.right,
       markerLeft: markerRect.left,
       markerRight: markerRect.right,
-      previousOffset
+      previousOffset,
+      gap
     });
-    marker.style.setProperty("--dragdrop-callout-offset-x", `${nextOffset}px`);
-    calloutGutterOffsets.set(marker, nextOffset);
+    alignments.push({ marker, offset: nextOffset });
   }
+  return alignments;
 }
 function scheduleCalloutGutterAlignment(view) {
   view.requestMeasure({
-    read: () => null,
-    write: () => {
-      if (view.dom.isConnected) alignCalloutGutterHandles(view);
+    key: calloutAlignmentMeasureKey,
+    read: (measuredView) => calloutGutterAlignments(measuredView),
+    write: (alignments, measuredView) => {
+      if (!measuredView.dom.isConnected) return;
+      for (const { marker, offset } of alignments) {
+        if (!marker.isConnected) continue;
+        marker.style.setProperty("--dragdrop-callout-offset-x", `${offset}px`);
+        calloutGutterOffsets.set(marker, offset);
+      }
     }
   });
 }
@@ -949,8 +961,8 @@ function chooseMarkdownDropPosition(rawPosition, clientY, boundaries) {
     return candidatePositionDistance < bestPositionDistance ? candidate : best;
   }).position;
 }
-function requiresMoveConfirmation(units) {
-  return units.some((unit) => unit.existingBlockId !== void 0);
+function requiresMoveConfirmation(units, context = "destructive-edit") {
+  return context !== "same-file" && units.some((unit) => unit.existingBlockId !== void 0);
 }
 function normalizedRanges(content, ranges) {
   const sorted = [...ranges].map((range) => ({
@@ -1544,128 +1556,6 @@ async function runMarkdownTransaction(mutations, adapter) {
   }
 }
 
-// src/markdown-block-actions.ts
-var BLOCK_ID_RE2 = /(?:^|\s)\^([A-Za-z0-9-]+)\s*$/;
-var HEADING_RE2 = /^\s*#{1,6}\s+/;
-var LIST_RE2 = /^\s*(?:[-+*]|\d+[.)])\s+(?:\[[ xX-]\]\s+)?/;
-function splitBlockId(text) {
-  const match = text.match(BLOCK_ID_RE2);
-  if (!match || match.index === void 0) return { body: text.trim(), id: null };
-  return {
-    body: text.slice(0, match.index).trimEnd(),
-    id: match[1] ?? null
-  };
-}
-function removeMarkdownWrapper(text) {
-  const lines = text.split("\n");
-  const first = lines[0]?.trim() ?? "";
-  const last = lines.at(-1)?.trim() ?? "";
-  if (/^(`{3,}|~{3,})/.test(first) && last === first[0]?.repeat(first.length)) {
-    return lines.slice(1, -1).join("\n");
-  }
-  if (first === "$$" && last === "$$") return lines.slice(1, -1).join("\n");
-  return text;
-}
-function plainBlockBody(text) {
-  return removeMarkdownWrapper(text).split("\n").map((line) => line.replace(/^\s*>\s?/, "").replace(HEADING_RE2, "").replace(LIST_RE2, "")).join("\n").trim();
-}
-function withBlockId(text, id) {
-  return id ? `${text.trimEnd()} ^${id}` : text.trimEnd();
-}
-function canConvertMarkdownBlock(unit, conversion) {
-  if (directBlockEmbed(unit.text)) return false;
-  if (unit.kind === "callout" || unit.kind === "table" || unit.kind === "list-tree") return false;
-  if (unit.text.includes("\n") && conversion !== "code" && conversion !== "math") return false;
-  return unit.existingBlockId === void 0 || unit.text.includes(`^${unit.existingBlockId}`);
-}
-function convertMarkdownBlock(text, conversion) {
-  const { body: rawBody, id } = splitBlockId(text);
-  const body = plainBlockBody(rawBody);
-  if (!body) return null;
-  let converted;
-  switch (conversion) {
-    case "paragraph":
-      converted = body;
-      break;
-    case "heading-1":
-    case "heading-2":
-    case "heading-3":
-    case "heading-4":
-    case "heading-5":
-    case "heading-6":
-      converted = `${"#".repeat(Number(conversion.slice(-1)))} ${body}`;
-      break;
-    case "bullet-list":
-      converted = `- ${body}`;
-      break;
-    case "ordered-list":
-      converted = `1. ${body}`;
-      break;
-    case "task-list":
-      converted = `- [ ] ${body}`;
-      break;
-    case "quote":
-      converted = body.split("\n").map((line) => `> ${line}`).join("\n");
-      break;
-    case "code":
-      converted = `\`\`\`
-${body}
-\`\`\``;
-      break;
-    case "math":
-      converted = `$$
-${body}
-$$`;
-      break;
-  }
-  return withBlockId(converted, id);
-}
-function conversionLabel(conversion) {
-  switch (conversion) {
-    case "paragraph":
-      return "Paragraph";
-    case "heading-1":
-      return "Heading 1";
-    case "heading-2":
-      return "Heading 2";
-    case "heading-3":
-      return "Heading 3";
-    case "heading-4":
-      return "Heading 4";
-    case "heading-5":
-      return "Heading 5";
-    case "heading-6":
-      return "Heading 6";
-    case "bullet-list":
-      return "Bullet list";
-    case "ordered-list":
-      return "Ordered list";
-    case "task-list":
-      return "Task list";
-    case "quote":
-      return "Quote";
-    case "code":
-      return "Code block";
-    case "math":
-      return "Math block";
-  }
-}
-var MARKDOWN_BLOCK_CONVERSIONS = [
-  "paragraph",
-  "heading-1",
-  "heading-2",
-  "heading-3",
-  "heading-4",
-  "heading-5",
-  "heading-6",
-  "bullet-list",
-  "ordered-list",
-  "task-list",
-  "quote",
-  "code",
-  "math"
-];
-
 // src/markdown-structure.ts
 var LIST_LINE_RE = /^(?<indent>[ \t]*)(?<marker>(?:[-+*]|\d+[.)]))(?<spacing>\s+)/;
 var FENCE_LINE_RE = /^\s*(?<marker>`{3,}|~{3,})/;
@@ -2160,17 +2050,6 @@ var DragSessionManager = class extends import_obsidian6.Component {
         void this.deleteBlocks(view, units);
       })
     );
-    if (units.length === 1) {
-      menu.addSeparator();
-      for (const conversion of MARKDOWN_BLOCK_CONVERSIONS) {
-        const allowed = canConvertMarkdownBlock(units[0], conversion);
-        menu.addItem(
-          (item) => item.setTitle(`Convert to ${conversionLabel(conversion).toLowerCase()}`).setIcon("wand-2").setDisabled(!writable || !allowed).onClick(() => {
-            void this.convertBlock(view, units[0], conversion);
-          })
-        );
-      }
-    }
     menu.showAtMouseEvent(event);
     return true;
   }
@@ -2548,27 +2427,6 @@ var DragSessionManager = class extends import_obsidian6.Component {
     } catch (error) {
       console.error("DragDrop could not delete Markdown blocks.", error);
       new import_obsidian6.Notice("Could not delete the selected Markdown blocks.");
-    }
-  }
-  async convertBlock(view, unit, conversion) {
-    if (!this.isEditorWritable(view) || !canConvertMarkdownBlock(unit, conversion)) return;
-    if (view.state.doc.sliceString(unit.from, unit.to) !== unit.text) {
-      new import_obsidian6.Notice("The note changed while the menu was open. Try again.");
-      return;
-    }
-    const converted = convertMarkdownBlock(unit.text, conversion);
-    if (converted === null) return;
-    if (unit.existingBlockId !== void 0 && !converted.includes(`^${unit.existingBlockId}`)) {
-      new import_obsidian6.Notice("Conversion was cancelled because it would lose the block ID.");
-      return;
-    }
-    try {
-      view.dispatch({ changes: { from: unit.from, to: unit.to, insert: converted } });
-      this.clearBlockSelection(view);
-      view.focus();
-    } catch (error) {
-      console.error("DragDrop could not convert a Markdown block.", error);
-      new import_obsidian6.Notice("Could not convert the Markdown block.");
     }
   }
   async writeClipboard(view, content) {
@@ -3183,7 +3041,7 @@ var DragSessionManager = class extends import_obsidian6.Component {
           new import_obsidian6.Notice("The source note is read-only or not editable.");
           return;
         }
-        if (requiresMoveConfirmation(session.units)) {
+        if (requiresMoveConfirmation(session.units, target.context)) {
           const confirmed = await new MoveConfirmationModal(this.host.app, session.units.filter((unit) => unit.existingBlockId).length).openAndConfirm();
           if (!confirmed || !session.sourceView.state.doc.eq(session.sourceState.doc)) return;
         }
@@ -4216,8 +4074,8 @@ var import_obsidian8 = require("obsidian");
 
 // src/editable-block-embed-model.ts
 var BLOCK_ID_CHAR_RE = /[A-Za-z0-9-]/;
-var LIST_RE3 = /^(\s*)(?:[-+*]|\d+[.)])\s+/;
-var HEADING_RE3 = /^\s{0,3}#{1,6}(?:\s|$)/;
+var LIST_RE2 = /^(\s*)(?:[-+*]|\d+[.)])\s+/;
+var HEADING_RE2 = /^\s{0,3}#{1,6}(?:\s|$)/;
 var QUOTE_RE = /^\s*>/;
 var FENCE_RE2 = /^\s{0,3}(?:`{3,}|~{3,})/;
 function splitLines(content) {
@@ -4248,14 +4106,14 @@ function isBlank(line) {
   return /^\s*$/.test(line.text);
 }
 function listIndent(line) {
-  const match = LIST_RE3.exec(line.text);
+  const match = LIST_RE2.exec(line.text);
   return match ? match[1].length : null;
 }
 function isIndented(line) {
   return /^\s+\S/.test(line.text);
 }
 function isStructuralLine(line) {
-  return HEADING_RE3.test(line.text) || QUOTE_RE.test(line.text) || LIST_RE3.test(line.text);
+  return HEADING_RE2.test(line.text) || QUOTE_RE.test(line.text) || LIST_RE2.test(line.text);
 }
 function isBlockIdChar(value) {
   return value !== void 0 && BLOCK_ID_CHAR_RE.test(value);
@@ -4316,7 +4174,7 @@ function isSameListItemOrContinuation(previous, current) {
 }
 function canContinueBackward(previous, current) {
   if (isBlank(previous)) return false;
-  if (HEADING_RE3.test(previous.text)) return false;
+  if (HEADING_RE2.test(previous.text)) return false;
   const previousListIndent = listIndent(previous);
   if (previousListIndent !== null) {
     return isSameListItemOrContinuation(previous, current);
@@ -4336,7 +4194,7 @@ function findBlockStart(lines, anchorLine) {
 }
 function canContinueForward(current, anchor) {
   if (isBlank(current)) return false;
-  if (HEADING_RE3.test(current.text) || FENCE_RE2.test(current.text)) return false;
+  if (HEADING_RE2.test(current.text) || FENCE_RE2.test(current.text)) return false;
   const anchorListIndent = listIndent(anchor);
   const currentListIndent = listIndent(current);
   if (anchorListIndent !== null) {
@@ -5161,21 +5019,196 @@ function mergeSettings(loaded) {
   };
 }
 
+// src/settings-i18n.ts
+var EN_SETTINGS_TEXT = {
+  headingCoreBehavior: "Core behavior",
+  headingSelection: "Selection",
+  headingAppearance: "Appearance",
+  headingMobilePen: "Mobile and pen",
+  headingAdvanced: "Advanced",
+  modifierUnassigned: "Not assigned",
+  modifierNone: "No modifier",
+  modifierPrimary: "Ctrl / Command",
+  modifierShift: "Shift",
+  modifierAlt: "Alt or Option",
+  modifierPrimaryShift: "Ctrl / Command + Shift",
+  modifierPrimaryAlt: "Ctrl / Command + Alt or Option",
+  modifierShiftAlt: "Shift + Alt or Option",
+  modifierAll: "Ctrl / Command + Shift + Alt or Option",
+  canvasScope: "Drop onto Canvas",
+  sameMarkdownScope: "Drop within the same Markdown file",
+  crossMarkdownScope: "Drop into another Markdown file",
+  canvasLinkAction: "Insert a link to the original block",
+  canvasCreateAction: "Create a note from the block",
+  markdownEmbedAction: "Insert an embed of the original block",
+  markdownMoveAction: "Move the block here",
+  cancelDropAction: "Cancel this drop",
+  canvasActionDescription: "Choose the modifier that performs this Canvas action. A modifier can be assigned to only one action in this group.",
+  sameMarkdownActionDescription: "Choose the modifier that performs this action when the source and destination are in the same Markdown file.",
+  crossMarkdownActionDescription: "Choose the modifier that performs this action when dropping into another Markdown file or onto a Markdown file target.",
+  folderStrategyName: "Created note location",
+  folderStrategyDescription: "Choose where notes created by dragging to Canvas are stored.",
+  folderFixed: "Use a fixed folder",
+  folderSource: "Use the source note folder",
+  folderCanvas: "Use the Canvas folder",
+  fixedFolderName: "Fixed folder",
+  fixedFolderDescription: "Folder used when Created note location is set to a fixed folder. Missing folders are created automatically.",
+  fixedFolderPlaceholder: "Folder/path",
+  headingFileNamesName: "Heading note names",
+  headingFileNamesDescription: "Use cleaned heading text as the file name or ask for a name each time.",
+  headingFileNamesAuto: "Use the heading text",
+  headingFileNamesPrompt: "Ask every time",
+  structuralMovesName: "List-aware Markdown moves",
+  structuralMovesDescription: "When moving Markdown, recognize sibling, child, and outdent positions in lists.",
+  splitListItemsName: "Split list items",
+  splitListItemsDescription: "Create one Canvas card for each list item in the dragged range.",
+  multiBlockSelectionName: "Select multiple blocks",
+  multiBlockSelectionDescription: "Use Shift with a handle or long-press brushing on desktop to select several blocks before dragging.",
+  listParentDisplayName: "List parent behavior",
+  listParentDisplayDescription: "Choose whether a parent list item includes its children or links only the parent item.",
+  listParentNative: "Include the full subtree",
+  listParentSelf: "Parent item only",
+  nodeWidthName: "Canvas card width",
+  nodeWidthDescription: "Fixed width of Canvas cards created by a drop.",
+  initialNodeHeightName: "Initial Canvas card height",
+  initialNodeHeightDescription: "Temporary card height used until the rendered content is measured.",
+  verticalGapName: "Card spacing",
+  verticalGapDescription: "Vertical space between multiple cards created by one drop.",
+  previewWidthName: "Drag preview width",
+  previewWidthDescription: "Width of the Markdown preview that follows the pointer while dragging.",
+  handlePositionName: "Block handle position",
+  handlePositionDescription: "Place Markdown block handles on the left or right side of the text.",
+  handleLeft: "Left of the text",
+  handleRight: "Right of the text",
+  handleVisibilityName: "Block handle visibility",
+  handleVisibilityDescription: "Show handles on hover or focus, or keep them visible while editing.",
+  handleVisibilityHover: "On hover or focus",
+  handleVisibilityAlways: "Always visible",
+  canvasSummaryButtonName: "Canvas atomic note button",
+  canvasSummaryButtonDescription: "Show the floating Canvas toolbar button that turns the current selection into one note. The command remains available when this is off.",
+  touchDropActionName: "Touch drop action",
+  touchDropActionDescription: "Action used for finger or pen drops when no keyboard modifier is available.",
+  surfacePenName: "Surface Pen side-button drag",
+  surfacePenDescription: "Treat the Surface Pen side button as a normal drag when pressed on a Markdown handle.",
+  largerTouchHandlesName: "Larger touch handles",
+  largerTouchHandlesDescription: "Use 44 x 44 touch targets for Markdown handles on touch-oriented devices.",
+  mobileInteractionsName: "Mobile block selection",
+  mobileInteractionsDescription: "After a 200 ms long press, brush across handles to select blocks. Moving sooner still starts a drag.",
+  editableEmbedsName: "Edit embedded blocks",
+  editableEmbedsDescription: "Edit a Markdown block inside a ![[file#^block-id]] embed and write changes back to the original block. Requires an Obsidian reload.",
+  blockMenuName: "Block action menu",
+  blockMenuDescription: "Show Copy, Cut, and Delete when a Markdown block handle is right-clicked.",
+  crossFileTargetsName: "Markdown file drop targets",
+  crossFileTargetsDescription: "Allow dropping onto Markdown files in the file tree or onto internal links to append content at the end.",
+  edgeAutoScrollName: "Auto-scroll while dragging",
+  edgeAutoScrollDescription: "Scroll the Markdown editor when a drag is held near an edge.",
+  preserveFoldStateName: "Preserve folded sections",
+  preserveFoldStateDescription: "Restore heading and list folds after a move when the destination can still be folded.",
+  renumberListsName: "Renumber ordered lists after moving",
+  renumberListsDescription: "Recalculate consecutive ordered-list numbers after a move. When off, existing numbers are kept exactly.",
+  autoScrollEdgeName: "Auto-scroll edge distance",
+  autoScrollEdgeDescription: "Distance from the editor edge at which scrolling begins.",
+  autoScrollSpeedName: "Auto-scroll maximum speed",
+  autoScrollSpeedDescription: "Maximum scroll speed in pixels per animation frame.",
+  reloadEditableEmbedsNotice: "Reload Obsidian to apply Edit embedded blocks."
+};
+var ZH_SETTINGS_TEXT = {
+  headingCoreBehavior: "\u6838\u5FC3\u884C\u4E3A",
+  headingSelection: "\u5757\u9009\u62E9",
+  headingAppearance: "\u5916\u89C2",
+  headingMobilePen: "\u79FB\u52A8\u7AEF\u4E0E\u624B\u5199\u7B14",
+  headingAdvanced: "\u9AD8\u7EA7\u529F\u80FD",
+  modifierUnassigned: "\u4E0D\u5206\u914D",
+  modifierNone: "\u65E0\u4FEE\u9970\u952E",
+  modifierPrimary: "Ctrl / Command",
+  modifierShift: "Shift",
+  modifierAlt: "Alt / Option",
+  modifierPrimaryShift: "Ctrl / Command + Shift",
+  modifierPrimaryAlt: "Ctrl / Command + Alt / Option",
+  modifierShiftAlt: "Shift + Alt / Option",
+  modifierAll: "Ctrl / Command + Shift + Alt / Option",
+  canvasScope: "\u62D6\u653E\u5230 Canvas",
+  sameMarkdownScope: "\u5728\u540C\u4E00\u4E2A Markdown \u6587\u4EF6\u5185\u62D6\u653E",
+  crossMarkdownScope: "\u62D6\u653E\u5230\u53E6\u4E00\u4E2A Markdown \u6587\u4EF6",
+  canvasLinkAction: "\u63D2\u5165\u6307\u5411\u539F\u5757\u7684\u94FE\u63A5",
+  canvasCreateAction: "\u6839\u636E\u539F\u5757\u521B\u5EFA\u7B14\u8BB0",
+  markdownEmbedAction: "\u63D2\u5165\u539F\u5757\u7684\u5D4C\u5165",
+  markdownMoveAction: "\u628A\u539F\u5757\u79FB\u52A8\u5230\u8FD9\u91CC",
+  cancelDropAction: "\u53D6\u6D88\u672C\u6B21\u62D6\u653E",
+  canvasActionDescription: "\u9009\u62E9\u6267\u884C\u6B64 Canvas \u52A8\u4F5C\u65F6\u4F7F\u7528\u7684\u4FEE\u9970\u952E\u3002\u540C\u4E00\u7EC4\u5185\uFF0C\u4E00\u4E2A\u4FEE\u9970\u952E\u53EA\u80FD\u5206\u914D\u7ED9\u4E00\u4E2A\u52A8\u4F5C\u3002",
+  sameMarkdownActionDescription: "\u9009\u62E9\u6E90\u4F4D\u7F6E\u548C\u76EE\u6807\u4F4D\u7F6E\u5728\u540C\u4E00\u4E2A Markdown \u6587\u4EF6\u5185\u65F6\uFF0C\u6267\u884C\u6B64\u52A8\u4F5C\u6240\u4F7F\u7528\u7684\u4FEE\u9970\u952E\u3002",
+  crossMarkdownActionDescription: "\u9009\u62E9\u62D6\u653E\u5230\u53E6\u4E00\u4E2A Markdown \u6587\u4EF6\u6216 Markdown \u6587\u4EF6\u76EE\u6807\u65F6\uFF0C\u6267\u884C\u6B64\u52A8\u4F5C\u6240\u4F7F\u7528\u7684\u4FEE\u9970\u952E\u3002",
+  folderStrategyName: "\u65B0\u7B14\u8BB0\u4FDD\u5B58\u4F4D\u7F6E",
+  folderStrategyDescription: "\u9009\u62E9\u62D6\u653E\u5230 Canvas \u65F6\u6240\u521B\u5EFA\u7B14\u8BB0\u7684\u4FDD\u5B58\u4F4D\u7F6E\u3002",
+  folderFixed: "\u4F7F\u7528\u56FA\u5B9A\u6587\u4EF6\u5939",
+  folderSource: "\u4F7F\u7528\u6E90\u7B14\u8BB0\u6240\u5728\u6587\u4EF6\u5939",
+  folderCanvas: "\u4F7F\u7528 Canvas \u6240\u5728\u6587\u4EF6\u5939",
+  fixedFolderName: "\u56FA\u5B9A\u6587\u4EF6\u5939",
+  fixedFolderDescription: "\u201C\u65B0\u7B14\u8BB0\u4FDD\u5B58\u4F4D\u7F6E\u201D\u8BBE\u4E3A\u56FA\u5B9A\u6587\u4EF6\u5939\u65F6\u4F7F\u7528\u3002\u6587\u4EF6\u5939\u4E0D\u5B58\u5728\u65F6\u4F1A\u81EA\u52A8\u521B\u5EFA\u3002",
+  fixedFolderPlaceholder: "\u6587\u4EF6\u5939/\u8DEF\u5F84",
+  headingFileNamesName: "\u6807\u9898\u5757\u7B14\u8BB0\u547D\u540D",
+  headingFileNamesDescription: "\u4F7F\u7528\u6574\u7406\u540E\u7684\u6807\u9898\u6587\u5B57\u4F5C\u4E3A\u6587\u4EF6\u540D\uFF0C\u6216\u8005\u6BCF\u6B21\u521B\u5EFA\u65F6\u8BE2\u95EE\u540D\u79F0\u3002",
+  headingFileNamesAuto: "\u4F7F\u7528\u6807\u9898\u6587\u5B57",
+  headingFileNamesPrompt: "\u6BCF\u6B21\u8BE2\u95EE",
+  structuralMovesName: "\u8BC6\u522B\u5217\u8868\u7ED3\u6784\u7684 Markdown \u79FB\u52A8",
+  structuralMovesDescription: "\u79FB\u52A8 Markdown \u5185\u5BB9\u65F6\uFF0C\u8BC6\u522B\u5217\u8868\u4E2D\u7684\u540C\u7EA7\u3001\u5B50\u7EA7\u548C\u51CF\u5C11\u7F29\u8FDB\u4F4D\u7F6E\u3002",
+  splitListItemsName: "\u62C6\u5206\u5217\u8868\u9879",
+  splitListItemsDescription: "\u62D6\u52A8\u4E00\u6BB5\u5217\u8868\u65F6\uFF0C\u4E3A\u6BCF\u4E2A\u5217\u8868\u9879\u5206\u522B\u521B\u5EFA\u4E00\u5F20 Canvas \u5361\u7247\u3002",
+  multiBlockSelectionName: "\u9009\u62E9\u591A\u4E2A\u5757",
+  multiBlockSelectionDescription: "\u62D6\u52A8\u524D\u53EF\u6309\u4F4F Shift \u70B9\u51FB\u6293\u624B\uFF0C\u6216\u5728\u684C\u9762\u7AEF\u957F\u6309\u5E76\u5212\u8FC7\u6293\u624B\u6765\u9009\u62E9\u591A\u4E2A\u5757\u3002",
+  listParentDisplayName: "\u7236\u5217\u8868\u9879\u5904\u7406\u65B9\u5F0F",
+  listParentDisplayDescription: "\u9009\u62E9\u7236\u5217\u8868\u9879\u662F\u5426\u5305\u542B\u5168\u90E8\u5B50\u9879\uFF0C\u6216\u8005\u53EA\u94FE\u63A5\u7236\u9879\u672C\u8EAB\u3002",
+  listParentNative: "\u5305\u542B\u5B8C\u6574\u5B50\u6811",
+  listParentSelf: "\u53EA\u5305\u542B\u7236\u9879",
+  nodeWidthName: "Canvas \u5361\u7247\u5BBD\u5EA6",
+  nodeWidthDescription: "\u62D6\u653E\u540E\u521B\u5EFA\u7684 Canvas \u5361\u7247\u56FA\u5B9A\u5BBD\u5EA6\u3002",
+  initialNodeHeightName: "Canvas \u5361\u7247\u521D\u59CB\u9AD8\u5EA6",
+  initialNodeHeightDescription: "\u5185\u5BB9\u5B8C\u6210\u6D4B\u91CF\u524D\u4E34\u65F6\u4F7F\u7528\u7684\u5361\u7247\u9AD8\u5EA6\u3002",
+  verticalGapName: "\u5361\u7247\u95F4\u8DDD",
+  verticalGapDescription: "\u4E00\u6B21\u62D6\u653E\u521B\u5EFA\u591A\u5F20\u5361\u7247\u65F6\uFF0C\u5361\u7247\u4E4B\u95F4\u7684\u5782\u76F4\u8DDD\u79BB\u3002",
+  previewWidthName: "\u62D6\u62FD\u9884\u89C8\u5BBD\u5EA6",
+  previewWidthDescription: "\u62D6\u62FD\u8FC7\u7A0B\u4E2D\u8DDF\u968F\u6307\u9488\u663E\u793A\u7684 Markdown \u9884\u89C8\u5BBD\u5EA6\u3002",
+  handlePositionName: "\u5757\u6293\u624B\u4F4D\u7F6E",
+  handlePositionDescription: "\u628A Markdown \u5757\u6293\u624B\u653E\u5728\u6587\u5B57\u7684\u5DE6\u4FA7\u6216\u53F3\u4FA7\u3002",
+  handleLeft: "\u6587\u5B57\u5DE6\u4FA7",
+  handleRight: "\u6587\u5B57\u53F3\u4FA7",
+  handleVisibilityName: "\u5757\u6293\u624B\u53EF\u89C1\u65B9\u5F0F",
+  handleVisibilityDescription: "\u4EC5\u5728\u60AC\u505C\u6216\u805A\u7126\u65F6\u663E\u793A\u6293\u624B\uFF0C\u6216\u8005\u5728\u7F16\u8F91\u65F6\u59CB\u7EC8\u663E\u793A\u3002",
+  handleVisibilityHover: "\u60AC\u505C\u6216\u805A\u7126\u65F6\u663E\u793A",
+  handleVisibilityAlways: "\u59CB\u7EC8\u663E\u793A",
+  canvasSummaryButtonName: "Canvas \u539F\u5B50\u7B14\u8BB0\u6309\u94AE",
+  canvasSummaryButtonDescription: "\u5728 Canvas \u6D6E\u52A8\u5DE5\u5177\u680F\u4E2D\u663E\u793A\u628A\u5F53\u524D\u9009\u62E9\u6574\u7406\u4E3A\u4E00\u7BC7\u7B14\u8BB0\u7684\u6309\u94AE\u3002\u5173\u95ED\u540E\u4ECD\u53EF\u4F7F\u7528\u547D\u4EE4\u9762\u677F\u4E2D\u7684\u547D\u4EE4\u3002",
+  touchDropActionName: "\u89E6\u63A7\u62D6\u653E\u52A8\u4F5C",
+  touchDropActionDescription: "\u624B\u6307\u6216\u624B\u5199\u7B14\u65E0\u6CD5\u4F7F\u7528\u952E\u76D8\u4FEE\u9970\u952E\u65F6\u6267\u884C\u7684\u52A8\u4F5C\u3002",
+  surfacePenName: "Surface Pen \u4FA7\u952E\u62D6\u62FD",
+  surfacePenDescription: "\u5728 Markdown \u6293\u624B\u4E0A\u6309\u4F4F Surface Pen \u4FA7\u952E\u65F6\uFF0C\u5C06\u5176\u4F5C\u4E3A\u666E\u901A\u62D6\u62FD\u5904\u7406\u3002",
+  largerTouchHandlesName: "\u52A0\u5927\u89E6\u63A7\u6293\u624B",
+  largerTouchHandlesDescription: "\u5728\u89E6\u63A7\u8BBE\u5907\u4E0A\u4E3A Markdown \u6293\u624B\u4F7F\u7528 44 \xD7 44 \u7684\u89E6\u63A7\u533A\u57DF\u3002",
+  mobileInteractionsName: "\u79FB\u52A8\u7AEF\u591A\u5757\u9009\u62E9",
+  mobileInteractionsDescription: "\u957F\u6309 200 \u6BEB\u79D2\u540E\uFF0C\u53EF\u5212\u8FC7\u591A\u4E2A\u6293\u624B\u8FDB\u884C\u9009\u62E9\uFF1B\u5728\u6B64\u4E4B\u524D\u79FB\u52A8\u4ECD\u4F1A\u76F4\u63A5\u5F00\u59CB\u62D6\u62FD\u3002",
+  editableEmbedsName: "\u7F16\u8F91\u5D4C\u5165\u5757",
+  editableEmbedsDescription: "\u76F4\u63A5\u7F16\u8F91 ![[\u6587\u4EF6#^\u5757ID]] \u4E2D\u7684 Markdown \u5757\uFF0C\u5E76\u628A\u4FEE\u6539\u5199\u56DE\u539F\u5757\u3002\u4FEE\u6539\u6B64\u9879\u540E\u9700\u8981\u91CD\u8F7D Obsidian\u3002",
+  blockMenuName: "\u5757\u64CD\u4F5C\u83DC\u5355",
+  blockMenuDescription: "\u53F3\u51FB Markdown \u5757\u6293\u624B\u65F6\u663E\u793A\u590D\u5236\u3001\u526A\u5207\u548C\u5220\u9664\u64CD\u4F5C\u3002",
+  crossFileTargetsName: "Markdown \u6587\u4EF6\u62D6\u653E\u76EE\u6807",
+  crossFileTargetsDescription: "\u5141\u8BB8\u628A\u5185\u5BB9\u62D6\u5230\u6587\u4EF6\u5217\u8868\u4E2D\u7684 Markdown \u6587\u4EF6\u6216\u6B63\u6587\u5185\u90E8\u94FE\u63A5\uFF0C\u5E76\u8FFD\u52A0\u5230\u76EE\u6807\u6587\u4EF6\u672B\u5C3E\u3002",
+  edgeAutoScrollName: "\u62D6\u62FD\u65F6\u81EA\u52A8\u6EDA\u52A8",
+  edgeAutoScrollDescription: "\u62D6\u62FD\u505C\u7559\u5728 Markdown \u7F16\u8F91\u5668\u8FB9\u7F18\u65F6\u81EA\u52A8\u6EDA\u52A8\u3002",
+  preserveFoldStateName: "\u4FDD\u7559\u6298\u53E0\u72B6\u6001",
+  preserveFoldStateDescription: "\u79FB\u52A8\u540E\u76EE\u6807\u4F4D\u7F6E\u4ECD\u53EF\u6298\u53E0\u65F6\uFF0C\u6062\u590D\u6807\u9898\u548C\u5217\u8868\u7684\u6298\u53E0\u72B6\u6001\u3002",
+  renumberListsName: "\u79FB\u52A8\u540E\u91CD\u65B0\u7F16\u53F7\u6709\u5E8F\u5217\u8868",
+  renumberListsDescription: "\u79FB\u52A8\u540E\u91CD\u65B0\u8BA1\u7B97\u8FDE\u7EED\u7684\u6709\u5E8F\u5217\u8868\u7F16\u53F7\u3002\u5173\u95ED\u65F6\u5B8C\u6574\u4FDD\u7559\u539F\u7F16\u53F7\u3002",
+  autoScrollEdgeName: "\u81EA\u52A8\u6EDA\u52A8\u8FB9\u7F18\u8DDD\u79BB",
+  autoScrollEdgeDescription: "\u6307\u9488\u8DDD\u79BB\u7F16\u8F91\u5668\u8FB9\u7F18\u591A\u8FDC\u65F6\u5F00\u59CB\u6EDA\u52A8\u3002",
+  autoScrollSpeedName: "\u81EA\u52A8\u6EDA\u52A8\u6700\u9AD8\u901F\u5EA6",
+  autoScrollSpeedDescription: "\u6BCF\u4E2A\u52A8\u753B\u5E27\u6700\u591A\u6EDA\u52A8\u7684\u50CF\u7D20\u6570\u3002",
+  reloadEditableEmbedsNotice: "\u8BF7\u91CD\u8F7D Obsidian \u4EE5\u5E94\u7528\u201C\u7F16\u8F91\u5D4C\u5165\u5757\u201D\u8BBE\u7F6E\u3002"
+};
+function settingsTextForLanguage(language) {
+  return language.toLowerCase().startsWith("zh") ? ZH_SETTINGS_TEXT : EN_SETTINGS_TEXT;
+}
+
 // src/settings-tab.ts
-var CHORD_LABELS = {
-  none: "No modifier",
-  primary: "Ctrl / Command",
-  shift: "Shift",
-  alt: "Alt or Option",
-  "primary+shift": "Ctrl / Command + Shift",
-  "primary+alt": "Ctrl / Command + Alt or Option",
-  "shift+alt": "Shift + Alt or Option",
-  "primary+shift+alt": "Ctrl / Command + Shift + Alt or Option"
-};
-var MODIFIER_OPTIONS = {
-  [UNASSIGNED_MODIFIER]: "Not assigned",
-  ...CHORD_LABELS
-};
 var CANVAS_BINDING_ACTIONS = [
   "link-source",
   "create-note",
@@ -5186,18 +5219,39 @@ var MARKDOWN_BINDING_ACTIONS = [
   "move",
   "none"
 ];
-var CANVAS_ACTION_LABELS = {
-  inherit: "Use no-modifier action",
-  "link-source": "Link to source block",
-  "create-note": "Create note",
-  none: "Do nothing"
-};
-var MARKDOWN_ACTION_LABELS = {
-  inherit: "Use no-modifier action",
-  move: "Move content",
-  "embed-source": "Insert source embed",
-  none: "Do nothing"
-};
+function modifierOptions(text) {
+  return {
+    [UNASSIGNED_MODIFIER]: text.modifierUnassigned,
+    none: text.modifierNone,
+    primary: text.modifierPrimary,
+    shift: text.modifierShift,
+    alt: text.modifierAlt,
+    "primary+shift": text.modifierPrimaryShift,
+    "primary+alt": text.modifierPrimaryAlt,
+    "shift+alt": text.modifierShiftAlt,
+    "primary+shift+alt": text.modifierAll
+  };
+}
+function canvasActionLabel(action, text) {
+  switch (action) {
+    case "link-source":
+      return text.canvasLinkAction;
+    case "create-note":
+      return text.canvasCreateAction;
+    case "none":
+      return text.cancelDropAction;
+  }
+}
+function markdownActionLabel(action, text) {
+  switch (action) {
+    case "embed-source":
+      return text.markdownEmbedAction;
+    case "move":
+      return text.markdownMoveAction;
+    case "none":
+      return text.cancelDropAction;
+  }
+}
 function canvasActionKey(action) {
   return `canvasAction.${action}`;
 }
@@ -5266,102 +5320,104 @@ var DragDropSettingTab = class extends import_obsidian9.PluginSettingTab {
     }
   }
   getSettingGroups() {
+    const text = settingsTextForLanguage(import_obsidian9.moment.locale());
+    const modifiers = modifierOptions(text);
     const canvasActionItems = CANVAS_BINDING_ACTIONS.map((action) => ({
-      name: `Canvas: ${CANVAS_ACTION_LABELS[action]}`,
-      desc: "Choose the modifier used for this action. Selecting a modifier clears it from another action.",
+      name: `${text.canvasScope}: ${canvasActionLabel(action, text)}`,
+      desc: text.canvasActionDescription,
       control: {
         type: "dropdown",
         key: canvasActionKey(action),
-        options: MODIFIER_OPTIONS
+        options: modifiers
       }
     }));
     const markdownActionItems = MARKDOWN_BINDING_ACTIONS.map((action) => ({
-      name: `Markdown (different file): ${MARKDOWN_ACTION_LABELS[action]}`,
-      desc: "Choose the modifier used for this action when the target is another Markdown file or file target.",
+      name: `${text.crossMarkdownScope}: ${markdownActionLabel(action, text)}`,
+      desc: text.crossMarkdownActionDescription,
       control: {
         type: "dropdown",
         key: markdownActionKey(action),
-        options: MODIFIER_OPTIONS
+        options: modifiers
       }
     }));
     const sameMarkdownActionItems = MARKDOWN_BINDING_ACTIONS.map((action) => ({
-      name: `Markdown (same file): ${MARKDOWN_ACTION_LABELS[action]}`,
-      desc: "Choose the modifier used for this action when source and target are in the same Markdown file.",
+      name: `${text.sameMarkdownScope}: ${markdownActionLabel(action, text)}`,
+      desc: text.sameMarkdownActionDescription,
       control: {
         type: "dropdown",
         key: sameMarkdownActionKey(action),
-        options: MODIFIER_OPTIONS
+        options: modifiers
       }
     }));
     return [
       {
         type: "group",
-        heading: "Core behavior",
+        heading: text.headingCoreBehavior,
         items: [
           {
-            name: "Folder strategy",
-            desc: "Choose where notes created by drag and drop are stored.",
+            name: text.folderStrategyName,
+            desc: text.folderStrategyDescription,
             control: {
               type: "dropdown",
               key: "folderStrategy",
               options: {
-                fixed: "Fixed folder",
-                source: "Source note folder",
-                canvas: "Canvas folder"
+                fixed: text.folderFixed,
+                source: text.folderSource,
+                canvas: text.folderCanvas
               }
             }
           },
           ...this.host.config.folderStrategy === "fixed" ? [{
-            name: "Fixed folder",
-            desc: "Used when the folder strategy is fixed. Missing folders are created automatically.",
+            name: text.fixedFolderName,
+            desc: text.fixedFolderDescription,
             control: {
               type: "text",
               key: "defaultFolder",
-              placeholder: "Folder/path"
+              placeholder: text.fixedFolderPlaceholder
             }
           }] : [],
           {
-            name: "Heading file names",
-            desc: "Use cleaned heading text automatically or ask every time a heading creates a note.",
+            name: text.headingFileNamesName,
+            desc: text.headingFileNamesDescription,
             control: {
               type: "dropdown",
               key: "titleFilenameMode",
               options: {
-                auto: "Use heading text",
-                prompt: "Always ask"
+                auto: text.headingFileNamesAuto,
+                prompt: text.headingFileNamesPrompt
               }
             }
           },
           {
-            name: "Structural Markdown moves",
-            desc: "Use list-aware sibling, child and outdent behavior when the Markdown action is Move content.",
+            name: text.structuralMovesName,
+            desc: text.structuralMovesDescription,
             control: { type: "toggle", key: "structuralMarkdownMoves" }
           }
         ]
       },
       {
         type: "group",
-        heading: "Selection",
+        heading: text.headingSelection,
         items: [
           {
-            name: "Split list items",
-            desc: "Create one canvas card for every list item in the dragged range.",
+            name: text.splitListItemsName,
+            desc: text.splitListItemsDescription,
             control: { type: "toggle", key: "splitListItems" }
           },
           {
-            name: "Multi-block selection",
-            desc: "Allow Shift+handle range selection and desktop long-press brushing before dragging.",
+            name: text.multiBlockSelectionName,
+            desc: text.multiBlockSelectionDescription,
             control: { type: "toggle", key: "multiBlockSelection" }
           },
           ...this.host.config.splitListItems ? [{
-            name: "List parent display",
-            desc: "Native subtree uses a file node. Self only uses a linked text node when a parent has children.",
+            name: text.listParentDisplayName,
+            desc: text.listParentDisplayDescription,
             control: {
               type: "dropdown",
               key: "listParentDisplay",
               options: {
-                "native-subtree": "Native subtree",
-                "self-only": "Self only"
+                "native-subtree": text.listParentNative,
+                "self-only": text.listParentSelf
               }
             }
           }] : []
@@ -5369,125 +5425,128 @@ var DragDropSettingTab = class extends import_obsidian9.PluginSettingTab {
       },
       {
         type: "group",
-        heading: "Appearance",
+        heading: text.headingAppearance,
         items: [
           {
-            name: "Node width",
-            desc: "Fixed width for created Canvas nodes.",
+            name: text.nodeWidthName,
+            desc: text.nodeWidthDescription,
             control: { type: "number", key: "nodeWidth", min: 160, max: 1200, step: 1 }
           },
           {
-            name: "Initial node height",
-            desc: "Height used until rendered content is measured.",
+            name: text.initialNodeHeightName,
+            desc: text.initialNodeHeightDescription,
             control: { type: "number", key: "initialNodeHeight", min: 80, max: 1200, step: 1 }
           },
           {
-            name: "Vertical gap",
-            desc: "Space between cards created by one drop.",
+            name: text.verticalGapName,
+            desc: text.verticalGapDescription,
             control: { type: "number", key: "nodeGap", min: 0, max: 400, step: 1 }
           },
           {
-            name: "Drag preview width",
-            desc: "Width of the transparent Markdown preview that follows the pointer.",
+            name: text.previewWidthName,
+            desc: text.previewWidthDescription,
             control: { type: "number", key: "previewWidth", min: 200, max: 1e3, step: 1 }
           },
           {
-            name: "Handle position",
-            desc: "Place Markdown block handles on the left or right side of the editor line.",
+            name: text.handlePositionName,
+            desc: text.handlePositionDescription,
             control: {
               type: "dropdown",
               key: "handlePosition",
-              options: { left: "Left", right: "Right" }
+              options: { left: text.handleLeft, right: text.handleRight }
             }
           },
           {
-            name: "Handle visibility",
-            desc: "Show handles only on hover/focus or keep them visible while editing.",
+            name: text.handleVisibilityName,
+            desc: text.handleVisibilityDescription,
             control: {
               type: "dropdown",
               key: "handleVisibility",
-              options: { hover: "Hover or focus", always: "Always visible" }
+              options: {
+                hover: text.handleVisibilityHover,
+                always: text.handleVisibilityAlways
+              }
             }
           },
           {
-            name: "Canvas atomic note button",
-            desc: "Show the floating toolbar button for turning the current Canvas selection into an atomic note. The command remains available.",
+            name: text.canvasSummaryButtonName,
+            desc: text.canvasSummaryButtonDescription,
             control: { type: "toggle", key: "canvasSummaryButton" }
           }
         ]
       },
       {
         type: "group",
-        heading: "Mobile and pen",
+        heading: text.headingMobilePen,
         items: [
           {
-            name: "Touch drop action",
-            desc: "Used for finger or pen drops without a keyboard modifier.",
+            name: text.touchDropActionName,
+            desc: text.touchDropActionDescription,
             control: {
               type: "dropdown",
               key: "touchDropAction",
               options: {
-                "link-source": "Link to source block",
-                "create-note": "Create note",
-                none: "Do nothing"
+                "link-source": text.canvasLinkAction,
+                "create-note": text.canvasCreateAction,
+                none: text.cancelDropAction
               }
             }
           },
           {
-            name: "Surface Pen side-button drag",
-            desc: "Treat the Surface Pen side button as a left-button drag on a Markdown handle.",
+            name: text.surfacePenName,
+            desc: text.surfacePenDescription,
             control: { type: "toggle", key: "surfacePenSideButtonDrag" }
           },
           {
-            name: "Larger touch handles",
-            desc: "Use 44 x 44 touch targets for Markdown handles on coarse-pointer devices.",
+            name: text.largerTouchHandlesName,
+            desc: text.largerTouchHandlesDescription,
             control: { type: "toggle", key: "largeTouchHandles" }
           },
           {
-            name: "Mobile block interactions",
-            desc: "After a 200 ms long press, brush across Markdown handles to select blocks; short movement still starts a drag.",
+            name: text.mobileInteractionsName,
+            desc: text.mobileInteractionsDescription,
             control: { type: "toggle", key: "mobileBlockInteractions" }
           }
         ]
       },
       {
         type: "group",
-        heading: "Advanced",
+        heading: text.headingAdvanced,
         items: [
           {
-            name: "Editable block embeds",
-            desc: "Allow editing a Markdown block inside ![[file#^block-id]] embeds and write changes back to the original block. Requires an Obsidian reload.",
+            name: text.editableEmbedsName,
+            desc: text.editableEmbedsDescription,
             control: { type: "toggle", key: "editableBlockEmbeds" }
           },
           {
-            name: "Block type menu",
-            desc: "Show the Markdown block menu with Copy, Cut, Delete and safe type conversions.",
+            name: text.blockMenuName,
+            desc: text.blockMenuDescription,
             control: { type: "toggle", key: "blockTypeMenu" }
           },
           {
-            name: "Cross-file file targets",
-            desc: "Allow dropping onto Markdown files in the file tree or internal links to append at the end.",
+            name: text.crossFileTargetsName,
+            desc: text.crossFileTargetsDescription,
             control: { type: "toggle", key: "crossFileFileTargets" }
           },
           {
-            name: "Edge auto-scroll",
-            desc: "Scroll the Markdown editor while a drag is held near its edge.",
+            name: text.edgeAutoScrollName,
+            desc: text.edgeAutoScrollDescription,
             control: { type: "toggle", key: "edgeAutoScroll" }
           },
           {
-            name: "Preserve fold state",
-            desc: "Restore heading and list folds after a structural move when CodeMirror can still fold the destination.",
+            name: text.preserveFoldStateName,
+            desc: text.preserveFoldStateDescription,
             control: { type: "toggle", key: "preserveFoldState" }
           },
           {
-            name: "Renumber ordered lists after Move",
-            desc: "Recalculate contiguous ordered-list markers after a structural move. Off keeps every marker verbatim.",
+            name: text.renumberListsName,
+            desc: text.renumberListsDescription,
             control: { type: "toggle", key: "renumberOrderedLists" }
           },
           ...this.host.config.edgeAutoScroll ? [
             {
-              name: "Auto-scroll edge zone",
-              desc: "Distance from the editor edge at which scrolling begins.",
+              name: text.autoScrollEdgeName,
+              desc: text.autoScrollEdgeDescription,
               control: {
                 type: "number",
                 key: "autoScrollEdgePx",
@@ -5497,8 +5556,8 @@ var DragDropSettingTab = class extends import_obsidian9.PluginSettingTab {
               }
             },
             {
-              name: "Auto-scroll maximum speed",
-              desc: "Maximum scroll speed in pixels per animation frame.",
+              name: text.autoScrollSpeedName,
+              desc: text.autoScrollSpeedDescription,
               control: {
                 type: "number",
                 key: "autoScrollMaxSpeed",
@@ -5727,7 +5786,7 @@ var DragDropSettingTab = class extends import_obsidian9.PluginSettingTab {
         if (typeof value !== "boolean") return;
         this.host.config.editableBlockEmbeds = value;
         await this.host.saveSettings();
-        new import_obsidian9.Notice("Reload Obsidian to apply editable block embeds.");
+        new import_obsidian9.Notice(settingsTextForLanguage(import_obsidian9.moment.locale()).reloadEditableEmbedsNotice);
         return;
       case "structuralMarkdownMoves":
         if (typeof value !== "boolean") return;

@@ -3,19 +3,29 @@ import { calloutGutterOffset } from "../src/callout-handle-position";
 
 describe("Callout gutter positioning", () => {
   const geometry = {
-    contentLeft: 320,
-    contentRight: 1_080,
-    lineStart: 344,
+    lineLeft: 344,
+    lineRight: 344,
     markerLeft: 18,
     markerRight: 34,
-    previousOffset: 40,
+    previousOffset: 0,
+    gap: 4,
   };
 
-  it("aligns the left handle with the text column after a wide margin", () => {
-    expect(calloutGutterOffset("left", geometry)).toBe(366);
+  it("places the left handle immediately before the text column", () => {
+    expect(calloutGutterOffset("left", geometry)).toBe(306);
   });
 
-  it("aligns the right handle with the content edge", () => {
-    expect(calloutGutterOffset("right", geometry)).toBe(1_086);
+  it("places the right handle immediately after the text column", () => {
+    expect(calloutGutterOffset("right", geometry)).toBe(330);
+  });
+
+  it("does not accumulate an offset across repeated measurements", () => {
+    const firstOffset = calloutGutterOffset("left", geometry);
+    expect(calloutGutterOffset("left", {
+      ...geometry,
+      markerLeft: geometry.markerLeft + firstOffset,
+      markerRight: geometry.markerRight + firstOffset,
+      previousOffset: firstOffset,
+    })).toBe(firstOffset);
   });
 });

@@ -26,7 +26,7 @@ When a dragged block is already a standalone embed such as `![[Books/Source#^abc
 1. Open a source Markdown note and a destination Markdown note.
 2. Drag a block handle into the destination editor.
 3. With no modifier, DragDrop inserts an embed such as `![[Source note#^block-id]]` and only adds a missing block ID to the source. A dragged block that is already a standalone block embed is copied as that exact embed; multiple selected blocks create multiple embeds.
-4. Hold Ctrl on Windows/Linux or Command on macOS to move the block. Moving a block with an existing ID and moving from a read-only editor are guarded to prevent accidental loss.
+4. Hold Ctrl on Windows/Linux or Command on macOS to move the block. Same-file moves keep the file path and block ID, so they do not ask for reference-risk confirmation. Cross-file moves with an existing ID still ask for confirmation, and read-only editors remain protected.
 5. Move drops can use sibling, child, and outdent list intent, show a precise insertion line, highlight the source/target, and auto-scroll near the editor edge. These structural behaviors are controlled by settings and apply only to the Move action.
 
 Same-file Markdown drops and cross-file Markdown drops have separate modifier mappings. Every modifier chord (including no modifier, Ctrl/Command, Shift, Alt/Option, and combinations) can be assigned independently in Settings. The defaults are no modifier = embed and Ctrl/Command = move for both contexts.
@@ -78,7 +78,7 @@ For Canvas references and Markdown embeds, DragDrop keeps the Markdown source as
 - Existing block IDs are reused.
 - Heading references use the heading subpath and do not add a block ID.
 
-An explicit Ctrl/Command Markdown drop is the only action that removes source content. It asks before moving blocks with existing IDs and requires an editable source and destination.
+An explicit Ctrl/Command Markdown drop is the only drag action that removes source content. Same-file moves preserve existing block references without a confirmation dialog. Cross-file moves with an existing ID still ask for confirmation, and every move requires an editable source and destination.
 
 A generated note contains a blank first line followed by a source embed:
 
@@ -142,14 +142,16 @@ The settings tab includes:
 - Note folder strategy and fixed folder
 - Canvas node width, initial height, and gap
 - Drag preview width
-- Canvas actions, each with its assigned modifier (`Link to source block`, `Create note`, or `Do nothing`)
-- Markdown actions, each with its assigned modifier (`Insert source embed`, `Move content`, or `Do nothing`)
+- Canvas actions, each with its assigned modifier (`Insert a link to the original block`, `Create a note from the block`, or `Cancel this drop`)
+- Markdown actions, each with its assigned modifier (`Insert an embed of the original block`, `Move the block here`, or `Cancel this drop`)
 - Structural Markdown moves, desktop multi-block selection, block menus, cross-file file targets, edge auto-scroll, fold preservation, and optional ordered-list renumbering
 - Handle position (left/right) and visibility (hover/focus or always visible)
 - Surface Pen side-button drag
 - Mobile block interactions (disabled by default; long-press selection mode)
 - Canvas selection to atomic note from the floating toolbar or command palette
 - Editable block embeds (disabled by default; requires an Obsidian reload)
+
+The settings tab follows the Obsidian interface language and currently includes complete English and Simplified Chinese text. Right-clicking a block handle offers Copy, Cut, and Delete; block-type conversion actions are intentionally not included.
 
 Canvas actions and Markdown actions use separate modifier mappings. Markdown mappings are shown separately for same-file and cross-file/file-target drops. Choose a modifier from the action row; assigning a modifier to one action clears that modifier from another action in the same group. The default Markdown mapping is no modifier = embed and Ctrl/Command = move.
 

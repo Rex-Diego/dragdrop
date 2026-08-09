@@ -1,12 +1,12 @@
 export type CalloutHandleSide = "left" | "right";
 
 export interface CalloutGutterGeometry {
-  contentLeft: number;
-  contentRight: number;
-  lineStart: number;
+  lineLeft: number;
+  lineRight: number;
   markerLeft: number;
   markerRight: number;
   previousOffset: number;
+  gap: number;
 }
 
 export function calloutGutterOffset(
@@ -15,8 +15,7 @@ export function calloutGutterOffset(
 ): number {
   const baseLeft = geometry.markerLeft - geometry.previousOffset;
   const baseRight = geometry.markerRight - geometry.previousOffset;
-  const target = side === "right"
-    ? geometry.contentRight
-    : geometry.lineStart ?? geometry.contentLeft;
-  return target - (side === "right" ? baseRight : baseLeft);
+  return side === "right"
+    ? geometry.lineRight + geometry.gap - baseLeft
+    : geometry.lineLeft - geometry.gap - baseRight;
 }

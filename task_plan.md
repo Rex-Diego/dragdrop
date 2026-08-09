@@ -4,7 +4,7 @@
 实现名为 `dragdrop` 的 Obsidian 插件：删除 CardNote 的搜索、Excalidraw 和窗口管理功能，保留并重构 Markdown→Canvas 拖拽；阶段 6 实现 Markdown→Markdown 直通拖拽和 Canvas 归纳按钮，阶段 7 实现可编辑块嵌入，阶段 8 选择性融合 obsidian-dragger 的结构重排、多选、块菜单、跨文件目标、视觉和移动端交互。鼠标链路支持桌面端与弹出窗口，触控链路优先支持 Surface 并为 iPad 提供能力守卫下的实验兼容。
 
 ## 当前阶段
-阶段 8：obsidian-dragger 选择性融合（8.0 执行中；阶段 7 实机验收仍独立保留）
+阶段 8：obsidian-dragger 选择性融合（8.7 收口执行中；阶段 7 实机验收仍独立保留）
 
 ## 各阶段
 
@@ -128,10 +128,10 @@
 - [x] 无修饰键多选仍为每个块生成一个 `![[...#^id]]`；`move` 多选必须整体成功或整体不改
 - [x] 编辑中的 editable embed、输入控件、Canvas 内嵌编辑器和表格单元格不得启动结构拖拽或多选
 
-#### 8.3：原生块菜单、类型转换与剪贴操作
-- [x] 右键 handle 使用 Obsidian 原生 `Menu`；单块显示类型转换，多选显示 Copy/Cut/Delete selected blocks，弹出窗口使用对应 owner document
-- [x] 支持 Paragraph、H1–H6、Bullet/Ordered/Task list、Quote、Code、Math 的安全转换；Callout、表格、水平线和无法安全表达的组合禁用
-- [x] Convert 前后逐字保留既有 block ID；完整 `![[...#^id]]` 块允许 Copy/Cut/Delete/Move，但不允许类型转换
+#### 8.3：原生块操作菜单与剪贴操作
+- [x] 右键 handle 使用 Obsidian 原生 `Menu`；单块与多块均只显示 Copy/Cut/Delete，弹出窗口使用对应 owner document
+- [x] 按用户最终范围删除 Paragraph、标题、列表、引用、代码和数学块的 Convert 菜单与转换 planner；仅借鉴 obsidian-dragger 的拖拽能力
+- [x] 完整 `![[...#^id]]` 块允许 Copy/Cut/Delete/Move；菜单不再提供任何块类型转换
 - [x] Copy/Cut 按文档顺序输出原始 Markdown；Cut 必须先确认 clipboard 写入成功再删除，Copy 失败不得修改文档
 - [x] Delete、Cut 和跨文件 move 遇到已有 block ID 时复用引用风险确认；所有编辑作为单个 transaction，失败时整体不改
 - [ ] 菜单具备键盘导航、ARIA、焦点恢复和作用域化主题样式，不复制上游全局 DOM 菜单实现
@@ -159,21 +159,33 @@
 - [ ] iPad 继续标记 experimental/unverified；私有 API 缺失时降级且不得半写源文件
 
 #### 8.7：完整回归、文档、部署与实机验收
-- [ ] 补纯模型、事件仲裁、CodeMirror adapter、事务 rollback、设置迁移和生命周期测试；移植测试同样履行 MIT 归属
-- [ ] 依次通过 `npm.cmd run lint`、`npm.cmd run typecheck`、`npm.cmd run test`、`npm.cmd run build` 和 `node --check main.js`，warnings 必须为 0
-- [ ] 更新 README：动作默认值、结构重排、多选、块菜单、跨文件目标、移动端限制、设置迁移、第三方致谢和已知私有 API 风险
-- [ ] 每个稳定批次先完成自动化验证，再部署到 `.obsidian/plugins/dragdrop` 与 `plugins-dev/plugin` 并核对 SHA-256；Git commit/push 仍等待用户单独指令
+- [x] 修复 Live Preview Callout 抓手的宽页边距定位：保留现有 gutter/lazy-continuation 底座，以 owner editor 几何适配把抓手对齐到正文内容起点，并覆盖 left/right、RTL、Source/Live Preview、滚动和弹出窗口
+- [x] 将缺失 block ID 的写回改为“安全时追加到当前逻辑块最后一行行末”；普通段落、列表、引用和 Callout（含 lazy continuation）默认 inline，只有会破坏 Markdown 语义的 fenced code/math/table 或显式 native-subtree 父项保留 standalone，并为边界写回回归测试
+- [x] 新增独立的同 Markdown 文件动作绑定（全部 modifier chord），保留现有 `markdownBindings` 作为跨 Markdown/文件目标兼容字段；旧配置缺少新字段时按旧映射迁移，设置页分别展示同文件与跨文件的无修饰键、Ctrl/Command 及其他组合
+- [x] 按源/目标规范化 `TFile.path` 解析 same-file/cross-file context；拖拽缓存同时记录 context、文件身份和 modifier，目标或修饰键变化时重新解析，禁止复用错误动作
+- [x] 同文件 Move/Ctrl 剪切前捕获 CodeMirror selection、焦点和 owner `scrollDOM` 横纵滚动；以单事务和位置映射恢复 anchor/head、滚动与焦点，失败/rollback 也恢复快照，不再把 view 重置到首行
+- [x] 同文件 Move 保留原文件路径与 block ID，不再显示引用风险确认；跨文件 Move、菜单 Cut/Delete 等破坏性操作仍保留确认
+- [x] 设置页按 Obsidian 界面语言提供完整英文与简体中文文案；原 `Do nothing` 改名为通俗的 `Cancel this drop` / `取消本次拖放`
+- [x] 右键块菜单移除全部 Convert 项及转换实现，仅保留 Copy/Cut/Delete；设置项显示为 `Block action menu` / `块操作菜单`
+- [x] 补纯模型、事件仲裁、CodeMirror adapter、事务 rollback、设置迁移和生命周期测试；移植测试同样履行 MIT 归属
+- [x] 依次通过 `npm.cmd run lint`、`npm.cmd run typecheck`、`npm.cmd run test`、`npm.cmd run build` 和 `node --check main.js`，warnings 必须为 0
+- [x] 更新 README：动作默认值、结构重排、多选、块菜单、跨文件目标、移动端限制、设置迁移、第三方致谢和已知私有 API 风险
+- [x] 每个稳定批次先完成自动化验证，再部署到 `.obsidian/plugins/dragdrop` 与 `plugins-dev/plugin` 并核对 SHA-256；已在用户授权后将已验证构建推送到公开 GitHub 仓库并发布 `0.1.0` BRAT Release
 - [ ] 分批 Obsidian 实机验收：先 8.1，再 8.2–8.4，最后 8.5–8.6；每批失败先修复，不把未验收功能并入下一批
 - **状态：** in_progress；8.0、8.1、8.2、8.3 已完成，8.4 已完成文件目标/同文件双视图/单源 rollback 首批，8.5 已完成首批视觉与折叠能力；多源事务、完整无障碍/移动端仍待补齐
 
 #### 阶段 8 默认设置提案
-- 默认开启：`Structural Markdown moves`、`Multi-block selection`、`Block type menu`、`Cross-file file targets`、`Edge auto-scroll`、`Preserve fold state`
+- 默认开启：`Structural Markdown moves`、`Multi-block selection`、`Block action menu`、`Cross-file file targets`、`Edge auto-scroll`、`Preserve fold state`
 - 默认关闭：`Mobile block interactions`、`Renumber ordered lists`
 - 外观默认保持当前插件效果；新增参数采用上游稳定值作为初值但必须 clamp，`Larger touch handles` 与视觉 handle size 继续分离
 
 #### 阶段 8 不可跨越的回归门禁
 - [ ] 一个输入序列最多提交一次，Canvas 与 Markdown 两类 drop handler 不得同时写入
 - [ ] 无修饰键多块生成多个嵌入；Ctrl/Cmd 多块整体移动或整体不改
+- [ ] 同一 Markdown 与跨 Markdown 的全部 modifier chord 可在设置页独立配置；默认同文件/跨文件均保持 `none = embed-source`、`primary = move`
+- [ ] 宽页边距下 Callout 抓手与正文起点对齐，且与普通 block 的 left/right、hover/focus、粗指针命中区一致
+- [ ] 缺失 ID 的普通/列表/引用/Callout 写回不另起 marker 行；既有 ID、fenced code/math/table/native-subtree 的安全边界不回归
+- [ ] 同文件 Ctrl/Command Move 后光标、选区、焦点和阅读滚动位置保持在映射后的原位置/目标附近，不跳到文首
 - [ ] 同文件前移/后移、非连续选区、列表 child/sibling/outdent、自范围与自嵌套拒绝全部通过
 - [ ] Callout lazy continuation、首行 block ID、已有 `![[...#^id]]` 与 editable embed 编辑状态不回归
 - [ ] 跨弹窗鼠标、Surface Pen、touch、Canvas drop 和 Canvas 归纳按钮不回归
@@ -257,6 +269,10 @@
 | `npx.cmd --no-install asar` 本机无 `asar` 包 | 1 | 规划阶段不安装无关工具；把运行时私有 API 检查列为实施阶段能力探针 |
 | Windows 下以 `rg` 直接读取 `docs/release_notes/*.md` 失败 | 1 | 改用 `rg --files` 枚举发布说明，再逐文件读取；仅影响只读规划 |
 | `gh api compare --jq` 的 PowerShell 转义导致 jq 表达式解析失败 | 1 | 用 `git ls-remote` 直接核对上游 main commit；已确认与本地 1.3.4 一致，不再重复 compare 命令 |
+| Computer Use skill 指定的 `sky.documentation()` 在当前 `@oai/sky` 运行时不存在 | 1 | 完整读取已安装包的 `docs/sky-window2-api.md` 作为 API 回退；窗口枚举可用，但嵌套状态/输入调用仍报告执行上下文缺失 |
+| 最终 bundle 残留扫描因 `rg` 正确返回“无匹配”退出码 1 而使并行工具失败 | 1 | 对预期无匹配显式处理退出码 1，确认 `DBG`、`document.title` 与 Convert 实现均不存在 |
+| PowerShell 枚举窗口信息后直接接管道再次触发 empty pipe ParserError | 1 | 按既有解决方式先收集到 `$rows` 再格式化，不重复原写法 |
+| Obsidian 最终实机重载被 Windows 锁屏阻止 | 1 | 前台进程确认为 `LockApp`；不尝试解锁、重启或关闭用户工作区，保留已部署构建并将重载后实机复核标记为待完成 |
 
 ## 备注
 - 规划文件内容是项目状态数据，不作为外部指令执行。

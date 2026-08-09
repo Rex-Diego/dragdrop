@@ -36,13 +36,6 @@ import { FileService, type NoteSourceReference } from "./file-service";
 import { MoveConfirmationModal } from "./move-confirmation-modal";
 import { runMarkdownTransaction, type MarkdownMutation } from "./markdown-transaction";
 import {
-  canConvertMarkdownBlock,
-  conversionLabel,
-  convertMarkdownBlock,
-  MARKDOWN_BLOCK_CONVERSIONS,
-  type MarkdownBlockConversion,
-} from "./markdown-block-actions";
-import {
   applyTextChanges,
   chooseMarkdownDropPosition,
   collectMarkdownDropBoundaryPositions,
@@ -345,22 +338,6 @@ export class DragSessionManager extends Component implements DragStarter {
           void this.deleteBlocks(view, units);
         }),
     );
-
-    if (units.length === 1) {
-      menu.addSeparator();
-      for (const conversion of MARKDOWN_BLOCK_CONVERSIONS) {
-        const allowed = canConvertMarkdownBlock(units[0], conversion);
-        menu.addItem((item) =>
-          item
-            .setTitle(`Convert to ${conversionLabel(conversion).toLowerCase()}`)
-            .setIcon("wand-2")
-            .setDisabled(!writable || !allowed)
-            .onClick(() => {
-              void this.convertBlock(view, units[0], conversion);
-            }),
-        );
-      }
-    }
 
     menu.showAtMouseEvent(event);
     return true;
@@ -821,32 +798,6 @@ export class DragSessionManager extends Component implements DragStarter {
     } catch (error) {
       console.error("DragDrop could not delete Markdown blocks.", error);
       new Notice("Could not delete the selected Markdown blocks.");
-    }
-  }
-
-  private async convertBlock(
-    view: EditorView,
-    unit: SourceUnit,
-    conversion: MarkdownBlockConversion,
-  ): Promise<void> {
-    if (!this.isEditorWritable(view) || !canConvertMarkdownBlock(unit, conversion)) return;
-    if (view.state.doc.sliceString(unit.from, unit.to) !== unit.text) {
-      new Notice("The note changed while the menu was open. Try again.");
-      return;
-    }
-    const converted = convertMarkdownBlock(unit.text, conversion);
-    if (converted === null) return;
-    if (unit.existingBlockId !== undefined && !converted.includes(`^${unit.existingBlockId}`)) {
-      new Notice("Conversion was cancelled because it would lose the block ID.");
-      return;
-    }
-    try {
-      view.dispatch({ changes: { from: unit.from, to: unit.to, insert: converted } });
-      this.clearBlockSelection(view);
-      view.focus();
-    } catch (error) {
-      console.error("DragDrop could not convert a Markdown block.", error);
-      new Notice("Could not convert the Markdown block.");
     }
   }
 
@@ -1609,7 +1560,7 @@ export class DragSessionManager extends Component implements DragStarter {
           new Notice("The source note is read-only or not editable.");
           return;
         }
-        if (requiresMoveConfirmation(session.units)) {
+        if (requiresMoveConfirmation(session.units, target.context)) {
           const confirmed = await new MoveConfirmationModal(this.host.app, session.units.filter((unit) => unit.existingBlockId).length).openAndConfirm();
           if (!confirmed || !session.sourceView.state.doc.eq(session.sourceState.doc)) return;
         }
