@@ -135,7 +135,7 @@ describe("block references", () => {
       text: " ^222222",
     });
     expect(listItem.blockIdInsert).toEqual({
-      pos: listFirstLine.to,
+      pos: listLastLine.to,
       text: " ^222222",
     });
     expect(code.blockIdInsert).toEqual({
@@ -224,5 +224,26 @@ describe("block references", () => {
     expect(updatedState.doc.toString()).toBe(
       ["- Parent", "  - Child ^child", "^parent"].join("\n"),
     );
+  });
+
+  it("keeps exactly one space between body text and an inline ID", () => {
+    vi.spyOn(Math, "random").mockReturnValue(3 / 16);
+    const state = createState("Callout body   ");
+    const line = state.doc.line(1);
+    const planned = ensurePlannedReference(
+      state,
+      {
+        from: line.from,
+        to: line.to,
+        text: line.text,
+        kind: "callout",
+      },
+      new Set(),
+    );
+
+    expect(planned.blockIdInsert).toEqual({
+      pos: "Callout body".length,
+      text: " ^333333",
+    });
   });
 });

@@ -70,6 +70,7 @@
 
 .markdown-source-view.mod-cm6 .dragdrop-gutter-marker {
   justify-content: flex-start;
+  transform: translateX(var(--dragdrop-callout-offset-x, 0px));
 }
 
 .markdown-source-view.mod-cm6 .cm-line:hover > .dragdrop-handle .dragdrop-handle-icon,

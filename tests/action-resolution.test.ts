@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   resolveCanvasDropAction,
   resolveMarkdownDropAction,
+  resolveMarkdownDropActionForContext,
   type ModifierKeyState,
   type ResolvedCanvasDropAction,
 } from "../src/action-resolution";
@@ -209,5 +210,29 @@ describe("Markdown action resolution", () => {
     expect(merged.markdownBindings.none).toBe("embed-source");
     expect(merged.markdownBindings.primary).toBe("move");
     expect(merged.markdownBindings["primary+shift"]).toBe("inherit");
+    expect(merged.sameMarkdownBindings.none).toBe("embed-source");
+    expect(merged.sameMarkdownBindings.primary).toBe("move");
+  });
+
+  it("copies legacy Markdown bindings into same-file bindings on migration", () => {
+    const merged = mergeSettings({
+      markdownBindings: {
+        ...DEFAULT_SETTINGS.markdownBindings,
+        none: "none",
+        primary: "embed-source",
+      },
+    });
+
+    expect(merged.sameMarkdownBindings.none).toBe("none");
+    expect(merged.sameMarkdownBindings.primary).toBe("embed-source");
+  });
+
+  it("resolves same-file and cross-file contexts independently", () => {
+    const event = { ctrlKey: true, metaKey: false, shiftKey: false, altKey: false };
+    const crossFile = { ...DEFAULT_SETTINGS.markdownBindings, primary: "none" as const };
+    const sameFile = { ...DEFAULT_SETTINGS.sameMarkdownBindings, primary: "embed-source" as const };
+
+    expect(resolveMarkdownDropActionForContext(event, "cross-file", crossFile, sameFile)).toBe("none");
+    expect(resolveMarkdownDropActionForContext(event, "same-file", crossFile, sameFile)).toBe("embed-source");
   });
 });

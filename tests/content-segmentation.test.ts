@@ -145,7 +145,7 @@ describe("content segmentation", () => {
     expect(sourceSubpath(planned)).toBe("#^interior-callout-id");
   });
 
-  it("adds one standalone ID after an entire lazy callout when none exists", () => {
+  it("adds one inline ID at the end of the final lazy callout line", () => {
     const doc = ["> [!PDF] reference", "lazy body"].join("\n");
     const state = createMarkdownState(doc);
     const units = collectSourceUnits(
@@ -159,8 +159,8 @@ describe("content segmentation", () => {
     expect(units).toHaveLength(1);
     expect(planned.plannedBlockId).toMatch(/^[0-9a-f]{6}$/);
     expect(planned.blockIdInsert).toEqual({
-      pos: state.doc.length,
-      text: `\n^${planned.plannedBlockId}`,
+      pos: state.doc.line(2).to,
+      text: ` ^${planned.plannedBlockId}`,
     });
 
     let updatedState = state;
@@ -172,7 +172,7 @@ describe("content segmentation", () => {
       [planned],
     );
     expect(updatedState.doc.toString()).toBe(
-      `${doc}\n^${planned.plannedBlockId ?? ""}`,
+      `${doc} ^${planned.plannedBlockId ?? ""}`,
     );
   });
 

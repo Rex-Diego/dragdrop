@@ -7,6 +7,7 @@ import {
 
 export type ResolvedCanvasDropAction = Exclude<CanvasDropAction, "inherit">;
 export type ResolvedMarkdownDropAction = Exclude<MarkdownDropAction, "inherit">;
+export type MarkdownDropContext = "same-file" | "cross-file";
 export type ModifierKeyState = Pick<
   KeyboardEvent,
   "ctrlKey" | "metaKey" | "shiftKey" | "altKey"
@@ -50,4 +51,16 @@ export function resolveMarkdownDropAction(
 
   const fallback = bindings?.none;
   return isResolvedMarkdownDropAction(fallback) ? fallback : "embed-source";
+}
+
+export function resolveMarkdownDropActionForContext(
+  event: ModifierKeyState,
+  context: MarkdownDropContext,
+  crossFileBindings: MarkdownActionBindings | null | undefined,
+  sameFileBindings: MarkdownActionBindings | null | undefined,
+): ResolvedMarkdownDropAction {
+  return resolveMarkdownDropAction(
+    event,
+    context === "same-file" ? sameFileBindings : crossFileBindings,
+  );
 }

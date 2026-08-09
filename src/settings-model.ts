@@ -9,7 +9,7 @@ import type {
 } from "./model";
 import { MODIFIER_CHORDS } from "./model";
 
-export const SETTINGS_SCHEMA_VERSION = 1;
+export const SETTINGS_SCHEMA_VERSION = 2;
 export type HandlePosition = "left" | "right";
 export type HandleVisibility = "hover" | "always";
 
@@ -43,6 +43,7 @@ export interface DragDropSettings {
   titleFilenameMode: TitleFilenameMode;
   canvasBindings: Record<ModifierChord, CanvasDropAction>;
   markdownBindings: Record<ModifierChord, MarkdownDropAction>;
+  sameMarkdownBindings: Record<ModifierChord, MarkdownDropAction>;
 }
 
 export const UNASSIGNED_MODIFIER = "unassigned" as const;
@@ -119,6 +120,16 @@ export const DEFAULT_SETTINGS: DragDropSettings = {
     "shift+alt": "inherit",
     "primary+shift+alt": "inherit",
   },
+  sameMarkdownBindings: {
+    none: "embed-source",
+    primary: "move",
+    shift: "inherit",
+    alt: "inherit",
+    "primary+shift": "inherit",
+    "primary+alt": "inherit",
+    "shift+alt": "inherit",
+    "primary+shift+alt": "inherit",
+  },
 };
 
 type LegacySettings = Omit<Partial<DragDropSettings>, "schemaVersion"> & {
@@ -162,6 +173,21 @@ function migrateSettings(loaded: LegacySettings): Partial<DragDropSettings> {
   };
 }
 
+function mergeMarkdownBindings(
+  loaded: Record<string, unknown> | undefined,
+): Record<ModifierChord, MarkdownDropAction> {
+  const bindings = {
+    ...DEFAULT_SETTINGS.markdownBindings,
+    ...loaded,
+  };
+  for (const chord of Object.keys(bindings) as ModifierChord[]) {
+    if ((bindings[chord] as unknown) === "link-source") {
+      bindings[chord] = "embed-source";
+    }
+  }
+  return bindings;
+}
+
 export function mergeSettings(
   loaded: LegacySettings | null | undefined,
 ): DragDropSettings {
@@ -169,10 +195,13 @@ export function mergeSettings(
   const loadedMarkdownBindings = loaded?.markdownBindings as
     | Record<string, unknown>
     | undefined;
-  const markdownBindings = {
-    ...DEFAULT_SETTINGS.markdownBindings,
-    ...loaded?.markdownBindings,
-  };
+  const loadedSameMarkdownBindings = loaded?.sameMarkdownBindings as
+    | Record<string, unknown>
+    | undefined;
+  const markdownBindings = mergeMarkdownBindings(loadedMarkdownBindings);
+  const sameMarkdownBindings = mergeMarkdownBindings(
+    loadedSameMarkdownBindings ?? loadedMarkdownBindings,
+  );
   const hasLegacyDefaults =
     loadedMarkdownBindings?.none === "move" &&
     loadedMarkdownBindings.primary === "link-source" &&
@@ -181,11 +210,9 @@ export function mergeSettings(
     markdownBindings.none = DEFAULT_SETTINGS.markdownBindings.none;
     markdownBindings.primary = DEFAULT_SETTINGS.markdownBindings.primary;
     markdownBindings["primary+shift"] = DEFAULT_SETTINGS.markdownBindings["primary+shift"];
-  }
-  for (const chord of Object.keys(markdownBindings) as ModifierChord[]) {
-    if ((markdownBindings[chord] as unknown) === "link-source") {
-      markdownBindings[chord] = "embed-source";
-    }
+    sameMarkdownBindings.none = DEFAULT_SETTINGS.sameMarkdownBindings.none;
+    sameMarkdownBindings.primary = DEFAULT_SETTINGS.sameMarkdownBindings.primary;
+    sameMarkdownBindings["primary+shift"] = DEFAULT_SETTINGS.sameMarkdownBindings["primary+shift"];
   }
 
   return {
@@ -284,5 +311,6 @@ export function mergeSettings(
       ...loaded?.canvasBindings,
     },
     markdownBindings,
+    sameMarkdownBindings,
   };
 }

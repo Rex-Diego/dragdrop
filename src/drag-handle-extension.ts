@@ -5,6 +5,7 @@ import type { DecorationSet } from "@codemirror/view";
 import { setIcon } from "obsidian";
 import { buildHandleRanges } from "./content-segmentation";
 import type { HandleRange } from "./content-segmentation";
+import { calloutGutterOffset } from "./callout-handle-position";
 
 export interface DragStarter {
   openHandleMenu(
@@ -85,6 +86,7 @@ class DragHandleGutterMarker extends GutterMarker {
 }
 
 const hoveredGutterHandles = new WeakMap<EditorView, HTMLElement>();
+const calloutGutterOffsets = new WeakMap<HTMLElement, number>();
 
 function elementFromEventTarget(target: EventTarget | null): Element | null {
   if (!target || typeof target !== "object" || !("nodeType" in target)) return null;
@@ -151,6 +153,41 @@ function createGutterHoverExtension(): Extension {
   });
 }
 
+function alignCalloutGutterHandles(view: EditorView): void {
+  const contentRect = view.contentDOM.getBoundingClientRect();
+  const right = view.dom.ownerDocument.body?.classList.contains("dragdrop-handles-right") ?? false;
+  for (const marker of view.dom.findAll(".dragdrop-gutter-marker")) {
+    const handle = marker.querySelector<HTMLElement>(".dragdrop-handle[data-dragdrop-handle-kind='callout']");
+    if (!handle) continue;
+
+    const markerRect = marker.getBoundingClientRect();
+    const previousOffset = calloutGutterOffsets.get(marker) ?? 0;
+    const from = Number(handle.dataset.dragdropHandleFrom ?? 0);
+    const coords = view.coordsAtPos(from);
+    const leftTarget = coords?.left ?? contentRect.left;
+    const nextOffset = calloutGutterOffset(right ? "right" : "left", {
+      contentLeft: contentRect.left,
+      contentRight: contentRect.right,
+      lineStart: leftTarget,
+      markerLeft: markerRect.left,
+      markerRight: markerRect.right,
+      previousOffset,
+    });
+
+    marker.style.setProperty("--dragdrop-callout-offset-x", `${nextOffset}px`);
+    calloutGutterOffsets.set(marker, nextOffset);
+  }
+}
+
+function scheduleCalloutGutterAlignment(view: EditorView): void {
+  view.requestMeasure({
+    read: () => null,
+    write: () => {
+      if (view.dom.isConnected) alignCalloutGutterHandles(view);
+    },
+  });
+}
+
 function createDragHandleElement(
   starter: DragStarter,
   view: EditorView,
@@ -208,6 +245,8 @@ function createDragHandleElement(
     });
     view.focus();
   });
+
+  if (range.kind === "callout") scheduleCalloutGutterAlignment(view);
 
   return element;
 }
@@ -272,5 +311,10 @@ export function createDragHandleExtension(starter: DragStarter): Extension {
         update.docChanged || update.viewportChanged || update.geometryChanged,
     }),
     createGutterHoverExtension(),
+    EditorView.updateListener.of((update) => {
+      if (update.docChanged || update.viewportChanged || update.geometryChanged) {
+        scheduleCalloutGutterAlignment(update.view);
+      }
+    }),
   ];
 }

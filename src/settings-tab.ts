@@ -64,7 +64,8 @@ type CanvasBindingAction = Exclude<CanvasDropAction, "inherit">;
 type MarkdownBindingAction = Exclude<MarkdownDropAction, "inherit">;
 type CanvasActionSettingKey = `canvasAction.${CanvasBindingAction}`;
 type MarkdownActionSettingKey = `markdownAction.${MarkdownBindingAction}`;
-type SettingKey = ScalarSettingKey | CanvasActionSettingKey | MarkdownActionSettingKey;
+type SameMarkdownActionSettingKey = `sameMarkdownAction.${MarkdownBindingAction}`;
+type SettingKey = ScalarSettingKey | CanvasActionSettingKey | MarkdownActionSettingKey | SameMarkdownActionSettingKey;
 
 type SupportedSettingControl =
   | SettingToggleControl<SettingKey>
@@ -132,6 +133,10 @@ function markdownActionKey(action: MarkdownBindingAction): MarkdownActionSetting
   return `markdownAction.${action}`;
 }
 
+function sameMarkdownActionKey(action: MarkdownBindingAction): SameMarkdownActionSettingKey {
+  return `sameMarkdownAction.${action}`;
+}
+
 function isModifierChord(value: string): value is ModifierChord {
   return MODIFIER_CHORDS.some((chord) => chord === value);
 }
@@ -145,6 +150,12 @@ function canvasActionFromKey(key: string): CanvasBindingAction | undefined {
 function markdownActionFromKey(key: string): MarkdownBindingAction | undefined {
   if (!key.startsWith("markdownAction.")) return undefined;
   const action = key.slice("markdownAction.".length);
+  return isMarkdownBindingAction(action) ? action : undefined;
+}
+
+function sameMarkdownActionFromKey(key: string): MarkdownBindingAction | undefined {
+  if (!key.startsWith("sameMarkdownAction.")) return undefined;
+  const action = key.slice("sameMarkdownAction.".length);
   return isMarkdownBindingAction(action) ? action : undefined;
 }
 
@@ -209,11 +220,20 @@ export class DragDropSettingTab extends PluginSettingTab {
       },
     }));
     const markdownActionItems: DragDropSettingDefinition[] = MARKDOWN_BINDING_ACTIONS.map((action) => ({
-      name: `Markdown: ${MARKDOWN_ACTION_LABELS[action]}`,
-      desc: "Choose the modifier used for this action. Selecting a modifier clears it from another action.",
+      name: `Markdown (different file): ${MARKDOWN_ACTION_LABELS[action]}`,
+      desc: "Choose the modifier used for this action when the target is another Markdown file or file target.",
       control: {
         type: "dropdown",
         key: markdownActionKey(action),
+        options: MODIFIER_OPTIONS,
+      },
+    }));
+    const sameMarkdownActionItems: DragDropSettingDefinition[] = MARKDOWN_BINDING_ACTIONS.map((action) => ({
+      name: `Markdown (same file): ${MARKDOWN_ACTION_LABELS[action]}`,
+      desc: "Choose the modifier used for this action when source and target are in the same Markdown file.",
+      control: {
+        type: "dropdown",
+        key: sameMarkdownActionKey(action),
         options: MODIFIER_OPTIONS,
       },
     }));
@@ -440,6 +460,7 @@ export class DragDropSettingTab extends PluginSettingTab {
               ]
             : []),
           ...canvasActionItems,
+          ...sameMarkdownActionItems,
           ...markdownActionItems,
         ],
       },
@@ -515,6 +536,11 @@ export class DragDropSettingTab extends PluginSettingTab {
       return assignedModifierForAction(this.host.config.markdownBindings, markdownAction);
     }
 
+    const sameMarkdownAction = sameMarkdownActionFromKey(key);
+    if (sameMarkdownAction !== undefined) {
+      return assignedModifierForAction(this.host.config.sameMarkdownBindings, sameMarkdownAction);
+    }
+
     switch (key) {
       case "splitListItems":
         return this.host.config.splitListItems;
@@ -586,6 +612,14 @@ export class DragDropSettingTab extends PluginSettingTab {
     if (markdownAction !== undefined) {
       if (!isBindingModifier(value)) return;
       assignModifierToAction(this.host.config.markdownBindings, markdownAction, value);
+      await this.host.saveSettings();
+      return;
+    }
+
+    const sameMarkdownAction = sameMarkdownActionFromKey(key);
+    if (sameMarkdownAction !== undefined) {
+      if (!isBindingModifier(value)) return;
+      assignModifierToAction(this.host.config.sameMarkdownBindings, sameMarkdownAction, value);
       await this.host.saveSettings();
       return;
     }

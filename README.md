@@ -29,6 +29,8 @@ When a dragged block is already a standalone embed such as `![[Books/Source#^abc
 4. Hold Ctrl on Windows/Linux or Command on macOS to move the block. Moving a block with an existing ID and moving from a read-only editor are guarded to prevent accidental loss.
 5. Move drops can use sibling, child, and outdent list intent, show a precise insertion line, highlight the source/target, and auto-scroll near the editor edge. These structural behaviors are controlled by settings and apply only to the Move action.
 
+Same-file Markdown drops and cross-file Markdown drops have separate modifier mappings. Every modifier chord (including no modifier, Ctrl/Command, Shift, Alt/Option, and combinations) can be assigned independently in Settings. The defaults are no modifier = embed and Ctrl/Command = move for both contexts.
+
 Markdown blocks can also be dropped onto a Markdown file in the file tree or an internal Markdown link to append at the end. Cross-file writes use revision checks and roll back an already-written source when the target changes or fails.
 
 Markdown drops align to a destination block boundary. Structural Move can preserve heading/list folds after the transaction, and optional ordered-list renumbering is disabled by default.
@@ -72,6 +74,7 @@ For Canvas references and Markdown embeds, DragDrop keeps the Markdown source as
 
 - It never cuts, replaces, or moves the dragged source content for Canvas drops or embeds.
 - It only adds a missing block ID when a block reference requires one.
+- For paragraphs, list items, quotes, and Callouts, a generated ID is appended to the last logical line as `正文 ^block-id` (with one separating space). Fenced code, math, tables, and native-subtree boundaries retain their standalone marker form.
 - Existing block IDs are reused.
 - Heading references use the heading subpath and do not add a block ID.
 
@@ -148,7 +151,7 @@ The settings tab includes:
 - Canvas selection to atomic note from the floating toolbar or command palette
 - Editable block embeds (disabled by default; requires an Obsidian reload)
 
-Canvas and Markdown actions use separate modifier mappings. Choose a modifier from the action row; assigning a modifier to one action clears that modifier from another action in the same group. The default Markdown mapping is no modifier = embed and Ctrl/Command = move.
+Canvas actions and Markdown actions use separate modifier mappings. Markdown mappings are shown separately for same-file and cross-file/file-target drops. Choose a modifier from the action row; assigning a modifier to one action clears that modifier from another action in the same group. The default Markdown mapping is no modifier = embed and Ctrl/Command = move.
 
 ## Compatibility and limitations
 
@@ -174,6 +177,16 @@ Depending on the selected action, DragDrop may:
 - When **Editable block embeds** is enabled, directly modify the selected source block after the user presses the embed pencil button
 
 It does not send vault content over the network.
+
+## Installation
+
+Install the beta build with the [BRAT](https://github.com/TfTHacker/obsidian42-brat) community plugin:
+
+1. In BRAT, choose **Add Beta plugin**.
+2. Enter `https://github.com/Rex-Diego/dragdrop`.
+3. Enable DragDrop in Obsidian's Community plugins settings after BRAT installs it.
+
+Each GitHub Release includes `manifest.json`, `main.js`, and `styles.css`. BRAT downloads those release artifacts; the repository must remain public.
 
 ## Development
 

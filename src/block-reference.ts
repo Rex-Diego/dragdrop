@@ -1,6 +1,6 @@
 import type { EditorState } from "@codemirror/state";
 import type { SourceUnit } from "./model";
-import { firstLineEndForUnit, lineEndForUnit } from "./content-segmentation";
+import { lineEndForUnit } from "./content-segmentation";
 
 const BLOCK_ID_RE = /^[A-Za-z0-9-]+$/;
 
@@ -10,6 +10,16 @@ export function createRandomBlockId(length = 6): string {
 
 export function isValidBlockId(value: string): boolean {
   return BLOCK_ID_RE.test(value);
+}
+
+function inlineInsertionPosition(state: EditorState, unit: SourceUnit): number {
+  const end = Math.max(0, Math.min(unit.anchorTo ?? unit.to, state.doc.length));
+  let line = state.doc.lineAt(end);
+  while (line.number > 1 && line.text.trim().length === 0) {
+    line = state.doc.line(line.number - 1);
+  }
+  const trailingWhitespace = line.text.match(/\s*$/)?.[0].length ?? 0;
+  return line.to - trailingWhitespace;
 }
 
 export function ensurePlannedReference(
@@ -27,13 +37,12 @@ export function ensurePlannedReference(
   while (usedIds.has(blockId)) blockId = createRandomBlockId();
   usedIds.add(blockId);
 
-  const isSingleListItem = unit.kind === "list-item" && !unit.text.includes("\n");
-  const isSimpleParagraph = unit.kind === "paragraph";
+  const inlineKinds = new Set(["paragraph", "list-item", "quote", "callout"]);
   const inline =
     unit.blockIdPlacement === "inline" ||
-    (unit.blockIdPlacement === undefined && (isSingleListItem || isSimpleParagraph));
-  const pos = inline && unit.kind === "list-item"
-    ? firstLineEndForUnit(state, unit)
+    (unit.blockIdPlacement === undefined && inlineKinds.has(unit.kind));
+  const pos = inline
+    ? inlineInsertionPosition(state, unit)
     : unit.anchorTo ?? lineEndForUnit(state, unit);
 
   return {

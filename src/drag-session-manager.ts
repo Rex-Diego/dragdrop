@@ -14,6 +14,8 @@ import {
 import {
   resolveCanvasDropAction,
   resolveMarkdownDropAction,
+  resolveMarkdownDropActionForContext,
+  type MarkdownDropContext,
   type ResolvedMarkdownDropAction,
 } from "./action-resolution";
 import { applyBlockIdInsertions, ensurePlannedReference, sourceSubpath } from "./block-reference";
@@ -65,7 +67,11 @@ import {
   type MarkdownDropIssue,
 } from "./markdown-structure";
 import { captureFoldStarts, restoreFoldStarts } from "./fold-state";
-import type { DragSession, SourceUnit } from "./model";
+import {
+  captureEditorViewSnapshot,
+  restoreEditorViewSnapshot,
+} from "./editor-view-state";
+import { modifierChordFromEvent, type DragSession, type SourceUnit } from "./model";
 import {
   canvasPenButtonForInteraction,
   canvasPenButtonsForButton,
@@ -146,6 +152,7 @@ interface MarkdownDropTarget {
   targetLineNumber: number;
   listIntent: ListDropIntent | null;
   issue: MarkdownDropIssue | null;
+  context: MarkdownDropContext;
   ownerDocument: Document;
 }
 
@@ -207,6 +214,10 @@ export class DragSessionManager extends Component implements DragStarter {
   private pendingGhostSessionId: string | null = null;
   private markdownDropAction: ResolvedMarkdownDropAction | null = null;
   private markdownDropDocument: Document | null = null;
+  private markdownDropContext: MarkdownDropContext | null = null;
+  private markdownDropSourcePath: string | null = null;
+  private markdownDropTargetPath: string | null = null;
+  private markdownDropChord: ReturnType<typeof modifierChordFromEvent> | null = null;
   private markdownDropLine: HTMLElement | null = null;
   private autoScrollFrame: number | null = null;
   private autoScrollTarget: MarkdownDropTarget | null = null;
@@ -956,6 +967,7 @@ export class DragSessionManager extends Component implements DragStarter {
         sameSourceFile ? this.session?.units ?? [] : [],
         position,
       ),
+      context: sameSourceFile ? "same-file" : "cross-file",
       ownerDocument,
     };
   }
@@ -1397,6 +1409,52 @@ export class DragSessionManager extends Component implements DragStarter {
     return null;
   }
 
+  private resolveMarkdownActionForTarget(
+    event: DragEvent,
+    context: MarkdownDropContext,
+  ): ResolvedMarkdownDropAction {
+    return resolveMarkdownDropActionForContext(
+      event,
+      context,
+      this.host.config.markdownBindings,
+      this.host.config.sameMarkdownBindings,
+    );
+  }
+
+  private cacheMarkdownAction(
+    action: ResolvedMarkdownDropAction,
+    event: DragEvent,
+    targetFile: TFile,
+    ownerDocument: Document,
+    context: MarkdownDropContext,
+  ): void {
+    this.markdownDropAction = action;
+    this.markdownDropDocument = ownerDocument;
+    this.markdownDropContext = context;
+    this.markdownDropSourcePath = this.session?.sourceFile.path ?? null;
+    this.markdownDropTargetPath = targetFile.path;
+    this.markdownDropChord = modifierChordFromEvent(event);
+  }
+
+  private cachedMarkdownAction(
+    event: DragEvent,
+    targetFile: TFile,
+    ownerDocument: Document,
+    context: MarkdownDropContext,
+  ): ResolvedMarkdownDropAction {
+    if (
+      this.markdownDropAction &&
+      this.markdownDropDocument === ownerDocument &&
+      this.markdownDropContext === context &&
+      this.markdownDropSourcePath === this.session?.sourceFile.path &&
+      this.markdownDropTargetPath === targetFile.path &&
+      this.markdownDropChord === modifierChordFromEvent(event)
+    ) {
+      return this.markdownDropAction;
+    }
+    return this.resolveMarkdownActionForTarget(event, context);
+  }
+
   private handleDragOver(event: DragEvent): void {
     if (!this.session) return;
     const document = (event.target as Node | null)?.ownerDocument ?? activeDocument;
@@ -1417,9 +1475,14 @@ export class DragSessionManager extends Component implements DragStarter {
     if (markdownTarget) {
       event.preventDefault();
       event.stopPropagation();
-      const action = resolveMarkdownDropAction(event, this.host.config.markdownBindings);
-      this.markdownDropAction = action;
-      this.markdownDropDocument = markdownTarget.ownerDocument;
+      const action = this.resolveMarkdownActionForTarget(event, markdownTarget.context);
+      this.cacheMarkdownAction(
+        action,
+        event,
+        markdownTarget.file,
+        markdownTarget.ownerDocument,
+        markdownTarget.context,
+      );
       if (action === "none") {
         this.hideMarkdownDropLine();
       } else {
@@ -1448,9 +1511,14 @@ export class DragSessionManager extends Component implements DragStarter {
     event.stopPropagation();
     this.stopAutoScroll();
     this.hideMarkdownDropLine();
-    const action = resolveMarkdownDropAction(event, this.host.config.markdownBindings);
-    this.markdownDropAction = action;
-    this.markdownDropDocument = fileTarget.ownerDocument;
+    const action = this.resolveMarkdownActionForTarget(event, "cross-file");
+    this.cacheMarkdownAction(
+      action,
+      event,
+      fileTarget.file,
+      fileTarget.ownerDocument,
+      "cross-file",
+    );
     if (event.dataTransfer) {
       event.dataTransfer.dropEffect =
         action === "move" ? "move" : action === "none" ? "none" : "copy";
@@ -1480,9 +1548,12 @@ export class DragSessionManager extends Component implements DragStarter {
     if (markdownTarget) {
       event.preventDefault();
       event.stopPropagation();
-      const action = this.markdownDropDocument === markdownTarget.ownerDocument
-        ? this.markdownDropAction ?? resolveMarkdownDropAction(event, this.host.config.markdownBindings)
-        : resolveMarkdownDropAction(event, this.host.config.markdownBindings);
+      const action = this.cachedMarkdownAction(
+        event,
+        markdownTarget.file,
+        markdownTarget.ownerDocument,
+        markdownTarget.context,
+      );
       await this.commitMarkdownDrop(session, markdownTarget, action);
       return;
     }
@@ -1494,9 +1565,12 @@ export class DragSessionManager extends Component implements DragStarter {
     }
     event.preventDefault();
     event.stopPropagation();
-    const action = this.markdownDropDocument === fileTarget.ownerDocument
-      ? this.markdownDropAction ?? resolveMarkdownDropAction(event, this.host.config.markdownBindings)
-      : resolveMarkdownDropAction(event, this.host.config.markdownBindings);
+    const action = this.cachedMarkdownAction(
+      event,
+      fileTarget.file,
+      fileTarget.ownerDocument,
+      "cross-file",
+    );
     await this.commitMarkdownFileDrop(session, fileTarget, action);
   }
 
@@ -1774,6 +1848,7 @@ export class DragSessionManager extends Component implements DragStarter {
   }
 
   private moveMarkdownBlocks(session: DragSession, target: MarkdownDropTarget): void {
+    const sourceViewSnapshot = captureEditorViewSnapshot(session.sourceView);
     const sourceFoldStarts = this.host.config.preserveFoldState
       ? captureFoldStarts(session.sourceView.state)
       : [];
@@ -1830,6 +1905,16 @@ export class DragSessionManager extends Component implements DragStarter {
       session.sourceView.dispatch({
         changes: { from: 0, to: session.sourceView.state.doc.length, insert: sourceAfter },
       });
+      restoreEditorViewSnapshot(
+        session.sourceView,
+        sourceViewSnapshot,
+        (position) => mapPositionAfterMove(
+          sourceContent,
+          plannedBlocks,
+          target.position,
+          position,
+        ),
+      );
       restoreFoldStarts(
         session.sourceView,
         sourceFoldStarts.map((start) => mapPositionAfterMove(
@@ -1850,7 +1935,20 @@ export class DragSessionManager extends Component implements DragStarter {
       sourceAfter,
       targetAfter,
     );
-    if (!applied || !this.host.config.preserveFoldState) return;
+    if (!applied) {
+      restoreEditorViewSnapshot(session.sourceView, sourceViewSnapshot);
+      return;
+    }
+
+    restoreEditorViewSnapshot(
+      session.sourceView,
+      sourceViewSnapshot,
+      (position) => sameDocument
+        ? mapPositionAfterMove(sourceContent, plannedBlocks, target.position, position)
+        : mapPositionAfterRemovals(position, sourceContent, blocks),
+    );
+
+    if (!this.host.config.preserveFoldState) return;
 
     restoreFoldStarts(
       session.sourceView,
@@ -2238,6 +2336,10 @@ export class DragSessionManager extends Component implements DragStarter {
     this.stopAutoScroll();
     this.markdownDropAction = null;
     this.markdownDropDocument = null;
+    this.markdownDropContext = null;
+    this.markdownDropSourcePath = null;
+    this.markdownDropTargetPath = null;
+    this.markdownDropChord = null;
     this.hideMarkdownDropLine();
   }
 
