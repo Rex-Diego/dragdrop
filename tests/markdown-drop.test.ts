@@ -5,6 +5,8 @@ import {
   directBlockEmbed,
   directBlockEmbedLinktext,
   insertBlocksAtBoundary,
+  mapPositionAfterInsertion,
+  mapPositionAfterMove,
   planMarkdownMove,
   requiresMoveConfirmation,
 } from "../src/markdown-drop";
@@ -60,6 +62,23 @@ describe("Markdown drop planning", () => {
       planMarkdownMove(content, [{ from, to, text: "Bravo" }], content.length),
     ).toBe("Alpha\n\nCharlie\n\nBravo");
     expect(content).toBe("Alpha\n\nBravo\n\nCharlie");
+  });
+
+  it("maps fold anchors with a moved block and an insertion boundary", () => {
+    const content = "Alpha\n\nBravo\n\nCharlie";
+    const from = content.indexOf("Bravo");
+    const to = from + "Bravo".length;
+    const moved = [{ from, to, text: "Bravo" }];
+
+    expect(mapPositionAfterMove(content, moved, content.length, from)).toBe(
+      "Alpha\n\nCharlie\n\n".length,
+    );
+    expect(
+      mapPositionAfterMove(content, moved, content.length, content.indexOf("Charlie")),
+    ).toBe("Alpha\n\n".length);
+    expect(mapPositionAfterInsertion("Alpha\n\nCharlie", 14, ["![[Bravo#^id]]"], 14)).toBe(
+      14 + "\n\n![[Bravo#^id]]".length,
+    );
   });
 
   it("keeps multiple blocks together and rejects overlapping ranges before changing content", () => {

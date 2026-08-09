@@ -42,11 +42,23 @@ type ScalarSettingKey =
   | "initialNodeHeight"
   | "nodeGap"
   | "previewWidth"
+  | "handlePosition"
+  | "handleVisibility"
   | "touchDropAction"
   | "surfacePenSideButtonDrag"
   | "largeTouchHandles"
   | "canvasSummaryButton"
-  | "editableBlockEmbeds";
+  | "editableBlockEmbeds"
+  | "structuralMarkdownMoves"
+  | "multiBlockSelection"
+  | "blockTypeMenu"
+  | "crossFileFileTargets"
+  | "edgeAutoScroll"
+  | "autoScrollEdgePx"
+  | "autoScrollMaxSpeed"
+  | "preserveFoldState"
+  | "renumberOrderedLists"
+  | "mobileBlockInteractions";
 
 type CanvasBindingAction = Exclude<CanvasDropAction, "inherit">;
 type MarkdownBindingAction = Exclude<MarkdownDropAction, "inherit">;
@@ -187,28 +199,54 @@ export class DragDropSettingTab extends PluginSettingTab {
   }
 
   private getSettingGroups(): DragDropSettingGroup[] {
+    const canvasActionItems: DragDropSettingDefinition[] = CANVAS_BINDING_ACTIONS.map((action) => ({
+      name: `Canvas: ${CANVAS_ACTION_LABELS[action]}`,
+      desc: "Choose the modifier used for this action. Selecting a modifier clears it from another action.",
+      control: {
+        type: "dropdown",
+        key: canvasActionKey(action),
+        options: MODIFIER_OPTIONS,
+      },
+    }));
+    const markdownActionItems: DragDropSettingDefinition[] = MARKDOWN_BINDING_ACTIONS.map((action) => ({
+      name: `Markdown: ${MARKDOWN_ACTION_LABELS[action]}`,
+      desc: "Choose the modifier used for this action. Selecting a modifier clears it from another action.",
+      control: {
+        type: "dropdown",
+        key: markdownActionKey(action),
+        options: MODIFIER_OPTIONS,
+      },
+    }));
+
     return [
       {
         type: "group",
-        heading: "Behavior",
+        heading: "Core behavior",
         items: [
           {
-            name: "Split list items",
-            desc: "Create one canvas card for every list item in the dragged range.",
-            control: { type: "toggle", key: "splitListItems" },
-          },
-          {
-            name: "List parent display",
-            desc: "Native subtree uses a file node. Self only uses a linked text node when a parent has children.",
+            name: "Folder strategy",
+            desc: "Choose where notes created by drag and drop are stored.",
             control: {
               type: "dropdown",
-              key: "listParentDisplay",
+              key: "folderStrategy",
               options: {
-                "native-subtree": "Native subtree",
-                "self-only": "Self only",
+                fixed: "Fixed folder",
+                source: "Source note folder",
+                canvas: "Canvas folder",
               },
             },
           },
+          ...(this.host.config.folderStrategy === "fixed"
+            ? [{
+                name: "Fixed folder",
+                desc: "Used when the folder strategy is fixed. Missing folders are created automatically.",
+                control: {
+                  type: "text" as const,
+                  key: "defaultFolder" as const,
+                  placeholder: "Folder/path",
+                },
+              }]
+            : []),
           {
             name: "Heading file names",
             desc: "Use cleaned heading text automatically or ask every time a heading creates a note.",
@@ -221,6 +259,96 @@ export class DragDropSettingTab extends PluginSettingTab {
               },
             },
           },
+          {
+            name: "Structural Markdown moves",
+            desc: "Use list-aware sibling, child and outdent behavior when the Markdown action is Move content.",
+            control: { type: "toggle", key: "structuralMarkdownMoves" },
+          },
+        ],
+      },
+      {
+        type: "group",
+        heading: "Selection",
+        items: [
+          {
+            name: "Split list items",
+            desc: "Create one canvas card for every list item in the dragged range.",
+            control: { type: "toggle", key: "splitListItems" },
+          },
+          {
+            name: "Multi-block selection",
+            desc: "Allow Shift+handle range selection and desktop long-press brushing before dragging.",
+            control: { type: "toggle", key: "multiBlockSelection" },
+          },
+          ...(this.host.config.splitListItems
+            ? [{
+                name: "List parent display",
+                desc: "Native subtree uses a file node. Self only uses a linked text node when a parent has children.",
+                control: {
+                  type: "dropdown" as const,
+                  key: "listParentDisplay" as const,
+                  options: {
+                    "native-subtree": "Native subtree",
+                    "self-only": "Self only",
+                  },
+                },
+              }]
+            : []),
+        ],
+      },
+      {
+        type: "group",
+        heading: "Appearance",
+        items: [
+          {
+            name: "Node width",
+            desc: "Fixed width for created Canvas nodes.",
+            control: { type: "number", key: "nodeWidth", min: 160, max: 1_200, step: 1 },
+          },
+          {
+            name: "Initial node height",
+            desc: "Height used until rendered content is measured.",
+            control: { type: "number", key: "initialNodeHeight", min: 80, max: 1_200, step: 1 },
+          },
+          {
+            name: "Vertical gap",
+            desc: "Space between cards created by one drop.",
+            control: { type: "number", key: "nodeGap", min: 0, max: 400, step: 1 },
+          },
+          {
+            name: "Drag preview width",
+            desc: "Width of the transparent Markdown preview that follows the pointer.",
+            control: { type: "number", key: "previewWidth", min: 200, max: 1_000, step: 1 },
+          },
+          {
+            name: "Handle position",
+            desc: "Place Markdown block handles on the left or right side of the editor line.",
+            control: {
+              type: "dropdown",
+              key: "handlePosition",
+              options: { left: "Left", right: "Right" },
+            },
+          },
+          {
+            name: "Handle visibility",
+            desc: "Show handles only on hover/focus or keep them visible while editing.",
+            control: {
+              type: "dropdown",
+              key: "handleVisibility",
+              options: { hover: "Hover or focus", always: "Always visible" },
+            },
+          },
+          {
+            name: "Canvas atomic note button",
+            desc: "Show the floating toolbar button for turning the current Canvas selection into an atomic note. The command remains available.",
+            control: { type: "toggle", key: "canvasSummaryButton" },
+          },
+        ],
+      },
+      {
+        type: "group",
+        heading: "Mobile and pen",
+        items: [
           {
             name: "Touch drop action",
             desc: "Used for finger or pen drops without a keyboard modifier.",
@@ -245,96 +373,75 @@ export class DragDropSettingTab extends PluginSettingTab {
             control: { type: "toggle", key: "largeTouchHandles" },
           },
           {
-            name: "Canvas atomic note button",
-            desc: "Show the floating toolbar button for turning the current Canvas selection into an atomic note. The command remains available.",
-            control: { type: "toggle", key: "canvasSummaryButton" },
+            name: "Mobile block interactions",
+            desc: "After a 200 ms long press, brush across Markdown handles to select blocks; short movement still starts a drag.",
+            control: { type: "toggle", key: "mobileBlockInteractions" },
           },
+        ],
+      },
+      {
+        type: "group",
+        heading: "Advanced",
+        items: [
           {
             name: "Editable block embeds",
             desc: "Allow editing a Markdown block inside ![[file#^block-id]] embeds and write changes back to the original block. Requires an Obsidian reload.",
             control: { type: "toggle", key: "editableBlockEmbeds" },
           },
+          {
+            name: "Block type menu",
+            desc: "Show the Markdown block menu with Copy, Cut, Delete and safe type conversions.",
+            control: { type: "toggle", key: "blockTypeMenu" },
+          },
+          {
+            name: "Cross-file file targets",
+            desc: "Allow dropping onto Markdown files in the file tree or internal links to append at the end.",
+            control: { type: "toggle", key: "crossFileFileTargets" },
+          },
+          {
+            name: "Edge auto-scroll",
+            desc: "Scroll the Markdown editor while a drag is held near its edge.",
+            control: { type: "toggle", key: "edgeAutoScroll" },
+          },
+          {
+            name: "Preserve fold state",
+            desc: "Restore heading and list folds after a structural move when CodeMirror can still fold the destination.",
+            control: { type: "toggle", key: "preserveFoldState" },
+          },
+          {
+            name: "Renumber ordered lists after Move",
+            desc: "Recalculate contiguous ordered-list markers after a structural move. Off keeps every marker verbatim.",
+            control: { type: "toggle", key: "renumberOrderedLists" },
+          },
+          ...(this.host.config.edgeAutoScroll
+            ? [
+                {
+                  name: "Auto-scroll edge zone",
+                  desc: "Distance from the editor edge at which scrolling begins.",
+                  control: {
+                    type: "number" as const,
+                    key: "autoScrollEdgePx" as const,
+                    min: 20,
+                    max: 200,
+                    step: 1,
+                  },
+                },
+                {
+                  name: "Auto-scroll maximum speed",
+                  desc: "Maximum scroll speed in pixels per animation frame.",
+                  control: {
+                    type: "number" as const,
+                    key: "autoScrollMaxSpeed" as const,
+                    min: 1,
+                    max: 30,
+                    step: 1,
+                  },
+                },
+              ]
+            : []),
+          ...canvasActionItems,
+          ...markdownActionItems,
         ],
-      },
-      {
-        type: "group",
-        heading: "File creation",
-        items: [
-          {
-            name: "Folder strategy",
-            desc: "Choose where notes created by drag and drop are stored.",
-            control: {
-              type: "dropdown",
-              key: "folderStrategy",
-              options: {
-                fixed: "Fixed folder",
-                source: "Source note folder",
-                canvas: "Canvas folder",
-              },
-            },
-          },
-          {
-            name: "Fixed folder",
-            desc: "Used when the folder strategy is fixed. Missing folders are created automatically.",
-            control: {
-              type: "text",
-              key: "defaultFolder",
-              placeholder: "Folder/path",
-            },
-          },
-        ],
-      },
-      {
-        type: "group",
-        heading: "Canvas layout",
-        items: [
-          {
-            name: "Node width",
-            desc: "Fixed width for created Canvas nodes.",
-            control: { type: "number", key: "nodeWidth", min: 160, max: 1_200, step: 1 },
-          },
-          {
-            name: "Initial node height",
-            desc: "Height used until rendered content is measured.",
-            control: { type: "number", key: "initialNodeHeight", min: 80, max: 1_200, step: 1 },
-          },
-          {
-            name: "Vertical gap",
-            desc: "Space between cards created by one drop.",
-            control: { type: "number", key: "nodeGap", min: 0, max: 400, step: 1 },
-          },
-          {
-            name: "Drag preview width",
-            desc: "Width of the transparent Markdown preview that follows the pointer.",
-            control: { type: "number", key: "previewWidth", min: 200, max: 1_000, step: 1 },
-          },
-        ],
-      },
-      {
-        type: "group",
-        heading: "Canvas actions",
-        items: CANVAS_BINDING_ACTIONS.map((action) => ({
-          name: CANVAS_ACTION_LABELS[action],
-          desc: "Choose the modifier used for this action. Selecting a modifier clears it from another action.",
-          control: {
-            type: "dropdown",
-            key: canvasActionKey(action),
-            options: MODIFIER_OPTIONS,
-          },
-        })),
-      },
-      {
-        type: "group",
-        heading: "Markdown actions",
-        items: MARKDOWN_BINDING_ACTIONS.map((action) => ({
-          name: MARKDOWN_ACTION_LABELS[action],
-          desc: "Choose the modifier used for this action. Selecting a modifier clears it from another action.",
-          control: {
-            type: "dropdown",
-            key: markdownActionKey(action),
-            options: MODIFIER_OPTIONS,
-          },
-        })),
       },
     ];
   }
@@ -427,6 +534,10 @@ export class DragDropSettingTab extends PluginSettingTab {
         return this.host.config.nodeGap;
       case "previewWidth":
         return this.host.config.previewWidth;
+      case "handlePosition":
+        return this.host.config.handlePosition;
+      case "handleVisibility":
+        return this.host.config.handleVisibility;
       case "touchDropAction":
         return this.host.config.touchDropAction;
       case "surfacePenSideButtonDrag":
@@ -437,6 +548,26 @@ export class DragDropSettingTab extends PluginSettingTab {
         return this.host.config.canvasSummaryButton;
       case "editableBlockEmbeds":
         return this.host.config.editableBlockEmbeds;
+      case "structuralMarkdownMoves":
+        return this.host.config.structuralMarkdownMoves;
+      case "multiBlockSelection":
+        return this.host.config.multiBlockSelection;
+      case "blockTypeMenu":
+        return this.host.config.blockTypeMenu;
+      case "crossFileFileTargets":
+        return this.host.config.crossFileFileTargets;
+      case "edgeAutoScroll":
+        return this.host.config.edgeAutoScroll;
+      case "autoScrollEdgePx":
+        return this.host.config.autoScrollEdgePx;
+      case "autoScrollMaxSpeed":
+        return this.host.config.autoScrollMaxSpeed;
+      case "preserveFoldState":
+        return this.host.config.preserveFoldState;
+      case "renumberOrderedLists":
+        return this.host.config.renumberOrderedLists;
+      case "mobileBlockInteractions":
+        return this.host.config.mobileBlockInteractions;
       default:
         return undefined;
     }
@@ -504,6 +635,14 @@ export class DragDropSettingTab extends PluginSettingTab {
         this.host.config.previewWidth = normalized;
         break;
       }
+      case "handlePosition":
+        if (value !== "left" && value !== "right") return;
+        this.host.config.handlePosition = value;
+        break;
+      case "handleVisibility":
+        if (value !== "hover" && value !== "always") return;
+        this.host.config.handleVisibility = value;
+        break;
       case "touchDropAction":
         if (!isTouchDropAction(value)) return;
         this.host.config.touchDropAction = value;
@@ -526,6 +665,50 @@ export class DragDropSettingTab extends PluginSettingTab {
         await this.host.saveSettings();
         new Notice("Reload Obsidian to apply editable block embeds.");
         return;
+      case "structuralMarkdownMoves":
+        if (typeof value !== "boolean") return;
+        this.host.config.structuralMarkdownMoves = value;
+        break;
+      case "multiBlockSelection":
+        if (typeof value !== "boolean") return;
+        this.host.config.multiBlockSelection = value;
+        break;
+      case "blockTypeMenu":
+        if (typeof value !== "boolean") return;
+        this.host.config.blockTypeMenu = value;
+        break;
+      case "crossFileFileTargets":
+        if (typeof value !== "boolean") return;
+        this.host.config.crossFileFileTargets = value;
+        break;
+      case "edgeAutoScroll":
+        if (typeof value !== "boolean") return;
+        this.host.config.edgeAutoScroll = value;
+        break;
+      case "autoScrollEdgePx": {
+        const normalized = clampInteger(value, 20, 200);
+        if (normalized === undefined) return;
+        this.host.config.autoScrollEdgePx = normalized;
+        break;
+      }
+      case "autoScrollMaxSpeed": {
+        const normalized = clampInteger(value, 1, 30);
+        if (normalized === undefined) return;
+        this.host.config.autoScrollMaxSpeed = normalized;
+        break;
+      }
+      case "preserveFoldState":
+        if (typeof value !== "boolean") return;
+        this.host.config.preserveFoldState = value;
+        break;
+      case "renumberOrderedLists":
+        if (typeof value !== "boolean") return;
+        this.host.config.renumberOrderedLists = value;
+        break;
+      case "mobileBlockInteractions":
+        if (typeof value !== "boolean") return;
+        this.host.config.mobileBlockInteractions = value;
+        break;
       default:
         return;
     }

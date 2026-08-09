@@ -148,7 +148,10 @@ function boundaryInsertion(
   const safePosition = Math.max(0, Math.min(position, content.length));
   const before = content.slice(0, safePosition);
   const after = content.slice(safePosition);
-  const body = blocks.map((block) => block.trim()).filter(Boolean).join("\n\n");
+  const body = blocks
+    .map((block) => block.trimEnd())
+    .filter((block) => block.trim().length > 0)
+    .join("\n\n");
   if (!body) return "";
 
   const beforeSeparator =
@@ -211,6 +214,44 @@ export function mapPositionAfterChanges(
     if (change.from > position) return offset;
     return offset + change.insert.length - (change.to - change.from);
   }, 0);
+}
+
+export function mapPositionAfterInsertion(
+  content: string,
+  position: number,
+  blocks: readonly string[],
+  insertionPosition: number,
+): number {
+  const safePosition = Math.max(0, Math.min(position, content.length));
+  const safeInsertionPosition = Math.max(0, Math.min(insertionPosition, content.length));
+  const inserted = boundaryInsertion(content, safeInsertionPosition, blocks);
+  return safePosition >= safeInsertionPosition
+    ? safePosition + inserted.length
+    : safePosition;
+}
+
+export function mapPositionAfterMove(
+  content: string,
+  blocks: readonly MarkdownMoveBlock[],
+  targetPosition: number,
+  position: number,
+): number {
+  const ranges = blocks.map(({ from, to }) => ({ from, to }));
+  const remaining = removeTextRanges(content, ranges);
+  const mappedTarget = mapPositionAfterRemovals(targetPosition, content, ranges);
+  const inserted = boundaryInsertion(remaining, mappedTarget, blocks.map((block) => block.text));
+  const before = remaining.slice(0, Math.max(0, Math.min(mappedTarget, remaining.length)));
+  const beforeSeparator =
+    before.length === 0 ? "" : before.endsWith("\n\n") ? "" : before.endsWith("\n") ? "\n" : "\n\n";
+  const insertionStart = mappedTarget + beforeSeparator.length;
+
+  const containing = ranges.find((range) => position >= range.from && position <= range.to);
+  if (containing) {
+    return insertionStart + Math.max(0, Math.min(position - containing.from, containing.to - containing.from));
+  }
+
+  const afterRemoval = mapPositionAfterRemovals(position, content, ranges);
+  return afterRemoval >= mappedTarget ? afterRemoval + inserted.length : afterRemoval;
 }
 
 export function boundaryInsertionForBlocks(

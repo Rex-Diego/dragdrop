@@ -21,9 +21,10 @@
 
 ## 当前交接点
 
-- 当前执行阶段 6：精简 + Markdown → Markdown + Canvas 归纳按钮；阶段 4、4.5 的未完成实机验收仍保留在原阶段，不并入本阶段。
-- 阶段 6 前置基线已确认：`npm.cmd run lint`、`npm.cmd run typecheck`、`npm.cmd run test` 均通过；2026-07-15 的实体鼠标 `dragstart` 缺陷已有 `ignoreEvent=true` 修复和实体落盘成功记录。
-- 阶段 6 必须按 0 → 1 → 2 → 3 → 4 顺序执行；先完成精简与 Markdown → Markdown 并验证，再处理 Canvas 浮动工具栏私有 API。
+- 当前执行阶段 8：选择性融合 obsidian-dragger；阶段 4、4.5、6、7 的未完成 Obsidian 实机验收仍保留在原阶段，不并入阶段 8。
+- 阶段 8 必须按 8.0 → 8.1 → 8.2 → 8.3 → 8.4 → 8.5 → 8.6 → 8.7 顺序执行；先建立质量基线、事件仲裁和职责边界，再逐批加入结构重排、多选、菜单、跨文件、视觉和移动端功能。
+- 阶段 7 当前代码已在 `11f35d6` 提交；其可编辑块嵌入仍需实机验收，阶段 8 不得覆盖其安全写回和 ID 保护逻辑。
+- 阶段 8 不改变阶段 6 默认：Markdown 无修饰键为 `embed-source`，Primary 为 `move`；只在动作解析结果为 `move` 时启用结构重排。
 - 关键决策、未完成项和错误以 `task_plan.md`、`findings.md`、`progress.md` 为准，不要仅靠本文件摘要实施。
 
 ## 执行约束
@@ -32,8 +33,10 @@
 - 依次运行与当前改动相关的 `npm.cmd run lint`、`npm.cmd run typecheck` 和 `npm.cmd run build`；修复 warnings，不只修 errors。
 - 生产构建若因沙箱无法遍历目录而失败，应按权限规则申请在沙箱外运行，不要改坏 esbuild 路径来规避权限。
 - 不运行 `npm audit fix --force`，不使用 `git reset --hard` 或其他破坏用户改动的命令。
-- 当前仓库尚未建立首次提交，已有文件可能全部显示为未跟踪；这些文件都是项目资产，必须保留。
+- 当前仓库已有阶段 7 提交；仍须保留用户资产，不使用 `git reset --hard`、`git checkout --` 或覆盖式同步。
 - 第一阶段只实现 Markdown → Canvas；阶段 6 已由用户明确批准进入 Markdown → Markdown 实现阶段，不能再将其视为仅保留设置与动作结构。
 - Markdown → Markdown 默认无修饰键为非破坏性的 `embed-source`，Primary 为 `move`；搬移不按文件夹路径限制，但仍受已有 block ID 确认、只读/不可编辑源和多块事务完整性约束。
 - Ctrl/Command 搬移是会删除源内容的破坏性操作，必须在已有 block ID、只读/不可编辑源和多块事务完整性上执行硬约束。
+- 阶段 8 每个输入序列只能由一个 handler 提交；必须保留跨弹窗鼠标 HTML5/DataTransfer/ghost，不得用 pointer-only 实现整体替换。
+- 阶段 8 必须复用当前 Callout lazy continuation、已有块嵌入和 editable embed 安全边界；不直接复制 Outliner 或 obsidian-dragger 的平台层、全局 DOM listener 或无 rollback 写入器。
 - CardNote、Outliner 和其他 reference 目录仅作参考，不直接修改，也不把已删除的搜索、Excalidraw 或笔记管理功能重新引入。

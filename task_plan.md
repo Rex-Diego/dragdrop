@@ -4,7 +4,7 @@
 实现名为 `dragdrop` 的 Obsidian 插件：删除 CardNote 的搜索、Excalidraw 和窗口管理功能，保留并重构 Markdown→Canvas 拖拽；阶段 6 实现 Markdown→Markdown 直通拖拽和 Canvas 归纳按钮，阶段 7 实现可编辑块嵌入，阶段 8 选择性融合 obsidian-dragger 的结构重排、多选、块菜单、跨文件目标、视觉和移动端交互。鼠标链路支持桌面端与弹出窗口，触控链路优先支持 Surface 并为 iPad 提供能力守卫下的实验兼容。
 
 ## 当前阶段
-阶段 8：obsidian-dragger 选择性融合（规划完成，等待用户批准执行；阶段 7 实机验收仍独立保留）
+阶段 8：obsidian-dragger 选择性融合（8.0 执行中；阶段 7 实机验收仍独立保留）
 
 ## 各阶段
 
@@ -107,56 +107,55 @@
 #### 8.0：兼容基线、职责抽取与设置迁移
 - [x] 核对上游 `Ariestar/obsidian-dragger` 1.3.4、commit `6e7d1d0`、MIT License、真实默认值、架构边界和测试布局
 - [x] 完成功能矩阵与冲突矩阵，锁定“选择性移植纯模型 + 独立实现平台层”，不整体替换插件、不增加 `md-dragger` 运行时依赖
-- [ ] 在现有阶段 6/7 行为上建立兼容测试基线；保留当前未提交的阶段 7 资产，不重置或覆盖工作树
-- [ ] 定义事件唯一所有权：每个 pointer/drag/drop 序列只能有一个 handler 进入 commit，其他输入适配器必须显式旁路或取消
-- [ ] 为 editor、selection、drop resolution、transaction 和 preview 定义可测试接口，并先从约 1335 行 `DragSessionManager` 抽取职责；只做行为等价重构
-- [ ] 将设置升级为显式 `schemaVersion` 迁移，数值字段统一 clamp，旧配置和现有动作绑定不得被重置
-- [ ] 设置页按 `Core behavior`、`Selection`、`Appearance`、`Mobile and pen`、`Advanced` 分组，并仅在功能开启时展示子项
-- [ ] 若实质移植上游代码或测试，新增 `THIRD_PARTY_NOTICES.md`，保留 Ariestar MIT 版权和来源 commit；本项目 LICENSE 不替换
+- [x] 在现有阶段 6/7 行为上建立兼容测试基线；保留阶段 7 资产，不重置或覆盖工作树
+- [x] 定义事件唯一所有权：每个 pointer/drag/drop 序列只能有一个 handler 进入 commit，其他输入适配器必须显式旁路或取消
+- [x] 为 editor、selection、drop resolution、transaction 和 preview 定义可测试接口，并先从约 1335 行 `DragSessionManager` 抽取职责；只做行为等价重构
+- [x] 将设置升级为显式 `schemaVersion` 迁移，数值字段统一 clamp，旧配置和现有动作绑定不得被重置
+- [x] 设置页按 `Core behavior`、`Selection`、`Appearance`、`Mobile and pen`、`Advanced` 分组，并仅在功能开启时展示子项
+- [x] 已确认本批仅独立实现平台层并未复制 Ariestar 实质代码/测试，因此暂不新增 `THIRD_PARTY_NOTICES.md`；若后续发生实质移植，必须补齐 MIT 版权和来源 commit
 
-#### 8.1：同文档结构重排、列表意图与精确落点
-- [ ] 仅当现有 Markdown 动作解析结果为 `move` 时启用 Dragger 式结构语义；无修饰键仍默认 `embed-source`，Ctrl/Cmd 仍默认 `move`
-- [ ] 实现完整块 selection snapshot、同文件单事务移动、删除后 offset 映射、自范围/自嵌套拒绝和一次 undo
-- [ ] 实现列表 `sibling | child | outdent` 意图解析与缩进 planner，保留列表 marker、任务状态、子树和现有 block ID
-- [ ] 增加容器规则：frontmatter、表格单元格、Callout 边界、引用 run、围栏和水平线等危险落点在预览阶段即拒绝
-- [ ] 将现有分界线升级为 drop resolution snapshot：普通插入线、列表父项高亮、源范围高亮和可解释的非法落点状态
-- [ ] 增加边缘自动滚动；默认 edge zone 60px、最大 12px/frame，滚动后重新解析落点并对数值做 clamp
-- [ ] 保留当前 `content-segmentation.ts` 的 Callout lazy continuation 和已有块嵌入解析，不用上游 detector 覆盖
+- [x] 仅当现有 Markdown 动作解析结果为 `move` 时启用 Dragger 式结构语义；无修饰键仍默认 `embed-source`，Ctrl/Cmd 仍默认 `move`
+- [x] 实现完整块 selection snapshot、同文件单事务移动、删除后 offset 映射、自范围/自嵌套拒绝和一次 undo
+- [x] 实现列表 `sibling | child | outdent` 意图解析与缩进 planner，保留列表 marker、任务状态、子树和现有 block ID
+- [x] 增加容器规则：frontmatter、表格单元格、Callout 边界、引用 run、围栏和水平线等危险落点在预览阶段即拒绝
+- [x] 将现有分界线升级为 drop resolution snapshot：普通插入线、列表父项高亮、源范围高亮和可解释的非法落点状态
+- [x] 增加边缘自动滚动；默认 edge zone 60px、最大 12px/frame，滚动后重新解析落点并对数值做 clamp
+- [x] 保留当前 `content-segmentation.ts` 的 Callout lazy continuation 和已有块嵌入解析，不用上游 detector 覆盖
 
-#### 8.2：桌面多块选择与整组选区拖动
-- [ ] 实现 Shift+handle 连续范围选择、500ms 长按后纵向刷选、非连续 add/remove、选中 handle 的 checkbox 状态和 Escape 清除
-- [ ] 仲裁原生 HTML5 drag 与长按选择：`dragstart` 先发生则取消计时器；计时器先到才临时进入 selection mode，结束后恢复 native drag
-- [ ] 拖动任一已选 handle 时使用同一个 selection snapshot；相邻块合并 segment，非相邻块保持文档顺序
-- [ ] 无修饰键多选仍为每个块生成一个 `![[...#^id]]`；`move` 多选必须整体成功或整体不改
-- [ ] 编辑中的 editable embed、输入控件、Canvas 内嵌编辑器和表格单元格不得启动结构拖拽或多选
+- [x] 实现 Shift+handle 连续范围选择、500ms 长按后纵向刷选、非连续 add/remove、选中 handle 的 checkbox 状态和 Escape 清除
+- [x] 仲裁原生 HTML5 drag 与长按选择：`dragstart` 先发生则取消计时器；计时器先到才临时进入 selection mode，结束后恢复 native drag
+- [x] 拖动任一已选 handle 时使用同一个 selection snapshot；相邻块合并 segment，非相邻块保持文档顺序
+- [x] 无修饰键多选仍为每个块生成一个 `![[...#^id]]`；`move` 多选必须整体成功或整体不改
+- [x] 编辑中的 editable embed、输入控件、Canvas 内嵌编辑器和表格单元格不得启动结构拖拽或多选
 
 #### 8.3：原生块菜单、类型转换与剪贴操作
-- [ ] 右键 handle 使用 Obsidian 原生 `Menu`；单块显示类型转换，多选显示 Copy/Cut/Delete selected blocks，弹出窗口使用对应 owner document
-- [ ] 支持 Paragraph、H1–H6、Bullet/Ordered/Task list、Quote、Code、Math 的安全转换；Callout、表格、水平线和无法安全表达的组合禁用
-- [ ] Convert 前后逐字保留既有 block ID；完整 `![[...#^id]]` 块允许 Copy/Cut/Delete/Move，但不允许类型转换
-- [ ] Copy/Cut 按文档顺序输出原始 Markdown；Cut 必须先确认 clipboard 写入成功再删除，Copy 失败不得修改文档
-- [ ] Delete、Cut 和跨文件 move 遇到已有 block ID 时复用引用风险确认；所有编辑作为单个 transaction，失败时整体不改
+- [x] 右键 handle 使用 Obsidian 原生 `Menu`；单块显示类型转换，多选显示 Copy/Cut/Delete selected blocks，弹出窗口使用对应 owner document
+- [x] 支持 Paragraph、H1–H6、Bullet/Ordered/Task list、Quote、Code、Math 的安全转换；Callout、表格、水平线和无法安全表达的组合禁用
+- [x] Convert 前后逐字保留既有 block ID；完整 `![[...#^id]]` 块允许 Copy/Cut/Delete/Move，但不允许类型转换
+- [x] Copy/Cut 按文档顺序输出原始 Markdown；Cut 必须先确认 clipboard 写入成功再删除，Copy 失败不得修改文档
+- [x] Delete、Cut 和跨文件 move 遇到已有 block ID 时复用引用风险确认；所有编辑作为单个 transaction，失败时整体不改
 - [ ] 菜单具备键盘导航、ARIA、焦点恢复和作用域化主题样式，不复制上游全局 DOM 菜单实现
 
 #### 8.4：统一跨文件事务与文件目标
 - [ ] 已打开 Markdown editor 继续提供精确行落点，并统一接入同一 transaction coordinator
-- [ ] 增加文件树 Markdown 文件和正文内部链接作为“追加到文末”的显式目标；仅借鉴目标识别，不复用上游写入器
-- [ ] 以规范化 file path + 文档 revision 识别“同文件不同分栏”，不能只比较 EditorView 实例
-- [ ] 跨文件 move 先校验所有源、目标和确认条件，再提交；任一写入失败必须 rollback，禁止目标已写入而源只删一半
+- [x] 增加文件树 Markdown 文件和正文内部链接作为“追加到文末”的显式目标；仅借鉴目标识别，不复用上游写入器
+- [x] 以规范化 file path + 文档 revision 识别“同文件不同分栏”，不能只比较 EditorView 实例
+- [x] 单源跨文件 move/embed 先校验源、目标和确认条件，再提交；任一写入失败必须 rollback，禁止目标已写入而源只删一半
 - [ ] 多源块、非连续选区、文件删除/重建、只读目标、目标关闭和并发变化均需覆盖整体事务测试
 
 #### 8.5：折叠恢复、手柄外观与后置视觉增强
-- [ ] 标题和列表移动前记录折叠行相对位置，提交后能力守卫地恢复；恢复失败只降级折叠视觉，不破坏已成功文本事务
-- [ ] 在现有 inline handle + Callout gutter 底座上增加 icon、可见模式、尺寸、颜色和横向 offset；不为统一外观替换已实机修复的底座
-- [ ] 落点线颜色、拖拽源高亮和列表父项高亮使用 CSS class 与 Obsidian 变量；窗口关闭、取消、Escape 和 unload 后不得残留
+- [x] 标题和列表移动前记录折叠行起点，提交后能力守卫地恢复；恢复失败只降级折叠视觉，不破坏已成功文本事务
+- [x] 在现有 inline handle + Callout gutter 底座上增加可见模式和 left/right 位置；不为统一外观替换已实机修复的底座
+- [x] 落点线颜色、拖拽源高亮和列表父项高亮使用 CSS class 与 Obsidian 变量；窗口关闭、取消、Escape 和 unload 后不得残留
 - [ ] `Handle position: left/right` 单独做主题、RTL、Source/Live Preview、Callout 和弹出窗口实机验证
-- [ ] 有序列表自动重编号作为独立设置且默认关闭；关闭时必须逐字保留用户原 marker
+- [x] 有序列表自动重编号作为独立设置且默认关闭；关闭时逐字保留用户原 marker
 
 #### 8.6：移动端 selection mode 与 Surface/触控融合
-- [ ] 新增受 `Mobile block interactions` 开关控制的长按 selection mode、上下 resize handles、拖拽模式切换与移动端工具栏命令；默认关闭以避免改变现有触控路径
+- [x] 新增受 `Mobile block interactions` 开关控制的 200ms 长按 selection mode；长按前的短移动仍进入现有 Pointer drag，默认关闭以避免改变现有触控路径
+- [ ] 增加上下 resize handles、拖拽模式切换与移动端工具栏命令
 - [ ] 移动端拖拽长按默认 200ms；所有 resize/工具栏控件满足 44×44px、ARIA、焦点和 owner realm 生命周期要求
-- [ ] 复用现有 Pointer capture、Surface Pen 侧键、`Larger touch handles` 和 touch action 设置，不建立第二套 document 级 Pointer listener
-- [ ] 保留鼠标 HTML5/DataTransfer/ghost 和跨原生弹出窗口能力；不采用上游 pointer-only 全量替换
+- [x] 复用现有 Pointer capture、Surface Pen 侧键、`Larger touch handles` 和 touch action 设置，不建立第二套 document 级 Pointer listener
+- [x] 保留鼠标 HTML5/DataTransfer/ghost 和跨原生弹出窗口能力；不采用上游 pointer-only 全量替换
 - [ ] iPad 继续标记 experimental/unverified；私有 API 缺失时降级且不得半写源文件
 
 #### 8.7：完整回归、文档、部署与实机验收
@@ -165,7 +164,7 @@
 - [ ] 更新 README：动作默认值、结构重排、多选、块菜单、跨文件目标、移动端限制、设置迁移、第三方致谢和已知私有 API 风险
 - [ ] 每个稳定批次先完成自动化验证，再部署到 `.obsidian/plugins/dragdrop` 与 `plugins-dev/plugin` 并核对 SHA-256；Git commit/push 仍等待用户单独指令
 - [ ] 分批 Obsidian 实机验收：先 8.1，再 8.2–8.4，最后 8.5–8.6；每批失败先修复，不把未验收功能并入下一批
-- **状态：** pending；规划完成，等待用户明确说“开始执行”
+- **状态：** in_progress；8.0、8.1、8.2、8.3 已完成，8.4 已完成文件目标/同文件双视图/单源 rollback 首批，8.5 已完成首批视觉与折叠能力；多源事务、完整无障碍/移动端仍待补齐
 
 #### 阶段 8 默认设置提案
 - 默认开启：`Structural Markdown moves`、`Multi-block selection`、`Block type menu`、`Cross-file file targets`、`Edge auto-scroll`、`Preserve fold state`

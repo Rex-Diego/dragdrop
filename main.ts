@@ -7,6 +7,8 @@ import { DragDropSettingTab } from "./src/settings-tab";
 import { DEFAULT_SETTINGS, mergeSettings, type DragDropSettings } from "./src/settings-model";
 
 const LARGE_TOUCH_HANDLE_CLASS = "dragdrop-large-touch-handles";
+const HANDLE_RIGHT_CLASS = "dragdrop-handles-right";
+const HANDLE_ALWAYS_VISIBLE_CLASS = "dragdrop-handles-always-visible";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -54,6 +56,11 @@ export default class DragDropPlugin extends Plugin {
 
     for (const document of documents) {
       document.body?.classList.toggle(LARGE_TOUCH_HANDLE_CLASS, this.config.largeTouchHandles);
+      document.body?.classList.toggle(HANDLE_RIGHT_CLASS, this.config.handlePosition === "right");
+      document.body?.classList.toggle(
+        HANDLE_ALWAYS_VISIBLE_CLASS,
+        this.config.handleVisibility === "always",
+      );
     }
   }
 

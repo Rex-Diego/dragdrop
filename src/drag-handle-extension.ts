@@ -7,6 +7,18 @@ import { buildHandleRanges } from "./content-segmentation";
 import type { HandleRange } from "./content-segmentation";
 
 export interface DragStarter {
+  openHandleMenu(
+    event: MouseEvent,
+    view: EditorView,
+    handle: HandleRange,
+    element: HTMLElement,
+  ): boolean;
+  handleHandlePointerDown(
+    event: PointerEvent,
+    view: EditorView,
+    handle: HandleRange,
+    element: HTMLElement,
+  ): boolean;
   beginDrag(event: DragEvent, view: EditorView, handle: HandleRange): void;
   beginPointerDrag(
     event: PointerEvent,
@@ -151,8 +163,11 @@ function createDragHandleElement(
       tabindex: "0",
       role: "button",
       "aria-label": "Drag Markdown block",
+      "aria-pressed": "false",
       "data-tooltip-position": "top",
       "data-dragdrop-handle-kind": range.kind,
+      "data-dragdrop-handle-from": range.from.toString(),
+      "data-dragdrop-handle-to": range.to.toString(),
     },
   });
   if (element.ownerDocument !== view.dom.ownerDocument) {
@@ -166,7 +181,11 @@ function createDragHandleElement(
     starter.beginDrag(event, view, range);
   });
   element.addEventListener("pointerdown", (event) => {
+    if (starter.handleHandlePointerDown(event, view, range, element)) return;
     starter.beginPointerDrag(event, view, range, element);
+  });
+  element.addEventListener("contextmenu", (event) => {
+    starter.openHandleMenu(event, view, range, element);
   });
   element.addEventListener("pointermove", (event) => {
     starter.movePointerDrag(event);

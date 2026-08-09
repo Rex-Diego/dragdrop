@@ -1,10 +1,16 @@
 import { Modal, Setting, type App } from "obsidian";
 
+export type DestructiveBlockAction = "move" | "cut" | "delete";
+
 export class MoveConfirmationModal extends Modal {
   private settled = false;
   private resolveResult: ((confirmed: boolean) => void) | undefined;
 
-  constructor(app: App, private readonly blockCount: number) {
+  constructor(
+    app: App,
+    private readonly blockCount: number,
+    private readonly action: DestructiveBlockAction = "move",
+  ) {
     super(app);
   }
 
@@ -18,10 +24,11 @@ export class MoveConfirmationModal extends Modal {
 
   onOpen(): void {
     this.modalEl.addClass("dragdrop-move-confirmation-modal");
-    this.titleEl.setText("Confirm move");
+    this.titleEl.setText(`Confirm ${this.action}`);
     const subject = this.blockCount === 1 ? "This block" : "One or more selected blocks";
+    const verb = this.action === "delete" ? "Deleting" : this.action === "cut" ? "Cutting" : "Moving";
     this.contentEl.createEl("p", {
-      text: `${subject} already has a block ID and may already be referenced by other notes. Moving it will break those references. Continue?`,
+      text: `${subject} already has a block ID and may already be referenced by other notes. ${verb} it may break those references. Continue?`,
     });
 
     let moveButton: HTMLButtonElement | undefined;
@@ -31,7 +38,7 @@ export class MoveConfirmationModal extends Modal {
       })
       .addButton((button) => {
         moveButton = button.buttonEl;
-        button.setButtonText("Move").setCta().onClick(() => this.finish(true));
+        button.setButtonText(this.action[0]?.toUpperCase() + this.action.slice(1)).setCta().onClick(() => this.finish(true));
       });
     moveButton?.focus();
   }

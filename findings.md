@@ -470,3 +470,53 @@
 | 直接依赖完整 `md-dragger` / 整体 platform 移植 | 语义和生命周期不兼容 | 明确排除 | — |
 | 性能 telemetry UI、演示站、本地化全套 | 非用户核心需求 | 不引入 UI；只保留内部 cache/counter 测试钩子 | — |
 | 非 Markdown 文件目标、搜索、Excalidraw、笔记管理 | 超出 DragDrop 边界 | 明确排除 | — |
+
+### 阶段 8.0 首批实施决策（2026-08-07）
+
+- 事件提交所有权落在现有两个提交入口之前：`DragCommitGate` 以 session ID 为边界，只允许 Canvas 或 Markdown 其中一个 owner claim；重复 `drop`、不同适配器或竞态调用不会再次进入写入逻辑。清理拖拽时释放 claim，新 session 开始时重新建立边界。
+- 选区解析从 `DragSessionManager` 抽为纯 `sourceRangesForHandle` adapter，保留原有规则：没有非空编辑器选区时只拖当前手柄；选区命中手柄时保留多 range，并把光标 range 映射回所在 block；选区位于其他 block 时回退当前手柄。
+- `DragDropSettings` 新增 `schemaVersion`，旧数据缺失版本按 0 迁移到当前版本；历史 `protectedFolders` 在迁移边界统一丢弃；`nodeWidth`、`initialNodeHeight`、`nodeGap`、`previewWidth` 读取时按现有设置页范围 clamp，动作绑定和其他有效用户值保留。
+- 设置页改为 `Core behavior`、`Selection`、`Appearance`、`Mobile and pen`、`Advanced` 五组。固定文件夹输入仅在固定策略下显示，列表父项显示仅在拆分列表项开启时显示；Canvas/Markdown 修饰键仍按“动作选择修饰键”排列，并保留原有存储结构。
+- 本批没有复制 Ariestar 的实质源码或测试，只参考其纯模型边界和行为；因此暂不新增 `THIRD_PARTY_NOTICES.md`，上游 MIT 归属决策仍对后续实质移植有效。
+
+### 阶段 8.1 首批实施决策（2026-08-07）
+
+- 结构语义只挂在现有 Markdown `move` 提交入口；`embed-source` 仍只生成嵌入，不会因为目标是列表而改写源内容。新增 `structuralMarkdownMoves` 默认开启，用于关闭列表结构增强而不改变 Move 动作本身。
+- 列表意图以拖拽指针在目标行的列位置解析：目标 marker 左侧为 `outdent`（有可退一级时），marker 文本区域为 `sibling`，目标内容区域为 `child`。planner 只调整共同缩进，保留原 marker、任务复选框、子树文本和 block ID。
+- `findMoveTargetIssue` 在提交前拒绝源范围、自嵌套，以及 frontmatter、表格行、围栏代码、引用 run、水平线的危险内部位置；当前 Callout lazy continuation 仍沿用现有 segmentation，复杂容器边界和可视化高亮留在 8.1 下一批，不让上游 detector 覆盖当前实现。
+- 自动滚动采用独立纯函数计算 edge delta，绑定目标 editor 的 owner window `requestAnimationFrame`；每帧滚动后重新计算 raw position、block boundary、列表意图和非法状态，取消/清理时释放 frame。
+- 8.1 收口时保留现有 Callout gutter 与普通 inline handle 底座；拖拽期间直接给当前 editor 的 `.cm-line` 加 source/target class，并让分界线按普通、child、outdent、invalid 状态着色，结束时统一移除，避免引入第二套 CodeMirror decoration 状态机。
+
+### 阶段 8.2 首批实施决策（2026-08-07）
+
+- 桌面 block selection 由 `block-selection.ts` 负责纯 range/key/toggle 规则；`DragSessionManager` 只保存每个 `EditorView` 的 editorState snapshot、anchor 和视觉顺序 ranges。拖拽时只有被选中的 handle 才复用整组选区，未选中的 handle 保持单块行为。
+- Shift+handle 立即扩展连续选区；Ctrl/Cmd+handle 在 500ms 原生拖拽等待期间执行非连续 toggle，若 `dragstart` 先发生则取消 toggle 并进入现有剪贴/嵌入动作。长按计时器先到时临时把该 handle 的 `draggable` 关闭，pointermove 在 owner window 上刷选，pointerup 恢复 native drag。
+- 选中状态使用现有 handle DOM 的 `aria-pressed`、`dragdrop-handle-selected` class，不替换 CodeMirror gutter/inline 底座；Escape、pointercancel、窗口关闭和 unload 清理 selection pointer，选区本身可保留到用户再次 Escape 或文档变化。
+
+### 阶段 8.3 首批实施决策（2026-08-07）
+
+- 块菜单使用公开的 Obsidian `Menu` / `showAtMouseEvent` / `onHide`，挂到抓手的 owner document；不复制上游全局 DOM 菜单。菜单通过 `blockTypeMenu` 开关控制。
+- 转换 planner 只接受能逐字保留 ID 的单块；完整 `![[...#^id]]`、Callout、表格和复杂列表树不提供转换，但仍可 Copy/Cut/Delete/Move。代码/数学 wrapper 会先去除再重建，ID token 重新附在结果末尾。
+- Copy/Cut 的文本按文档顺序以原始 Markdown 拼接；clipboard 先尝试 owner window 的 `navigator.clipboard`，再使用 owner document 的隐藏 textarea + `execCommand` fallback；Cut 只有 copy 成功后才调用单 transaction 删除。
+- file target 的 destructive move 复用现有 block ID confirmation；菜单 Delete/Cut 使用同一 modal 的 action 文案，所有修改前检查菜单打开期间文档是否改变。
+
+### 阶段 8.4 首批实施决策（2026-08-07）
+
+- 文件树目标识别 `.nav-file-title[data-path]`，正文目标识别 `a.internal-link[data-href|href]`，只接受 Markdown `TFile`；由 `crossFileFileTargets` 默认开启控制。
+- 文件目标统一解释为追加到文末：embed 追加每个源块的嵌入，move 追加原始块并从源 editor 删除。写入顺序为先在源 editor 提交、再对目标文件使用 `vault.process` revision guard；目标写入失败时只在源仍等于 sourceAfter 时回滚源 transaction，目标文件变更则拒绝覆盖。
+- 本批不把 file target 当作已打开 editor 的 drop target；编辑器仍优先提供精确行落点。相同 source/target path 拒绝，避免把文件树目标误当作同文件双视图 transaction。
+
+### 阶段 8.4/8.5 继续实施决策（2026-08-07）
+
+- 同文件双栏不能把 `EditorView` 实例当作文件身份。Markdown drop 先比较 `TFile.path`，再比较拖拽开始时的 CodeMirror document revision；两个 view 内容一致时只提交源 view，目标 view 依赖 Obsidian 同文件同步，避免一次拖拽产生两次写入。
+- 文件树/正文内部链接目标与已打开 editor 目标保持优先级分离：editor 仍支持精确行分界线，文件目标只表达“追加到文末”。file target 的 source editor dispatch 与 `vault.process` 写入由 `runMarkdownTransaction` 统一编排；每个 mutation 在 apply 时再次做 revision guard，失败时反向 rollback 已完成 mutation。
+- 当前阶段只承诺单源跨文件事务。桌面非连续多选仍可以来自同一源文件并按一个 mutation 提交；真正多源文件事务需要独立的 source registry 和全量 preflight，留在 8.4 后续批次，不能把单源实现误标成多源完成。
+- 折叠恢复采用 CodeMirror 的公开语言层能力 `foldedRanges`/`foldable`/`foldEffect`，只记录折叠行起点，恢复时重新询问目标语法树。私有折叠字段或恢复失败只影响视觉折叠，不影响已经成功的文本事务。
+- 手柄视觉只加在现有 inline + Callout gutter 底座之上：`handlePosition` 控制左右布局，`handleVisibility` 控制 hover/focus 与 always；`Larger touch handles` 仍只扩大粗指针命中区，避免把视觉尺寸与触控命中区混成一项。
+- 有序列表重编号默认关闭，开启后只应用于 Move 的最终文本，并跳过围栏代码；关闭时 planner 不改 marker，保持当前用户文档逐字不变。
+- 本批没有复制 Ariestar 的实质代码或测试，不新增 `THIRD_PARTY_NOTICES.md`。继续实质移植上游实现时，必须在同一批加入 MIT 归属、来源 commit 和派生文件说明。
+
+### 阶段 8.6 首批实施决策（2026-08-07）
+
+- 移动端长按选择必须与现有 Pointer drag 共享同一 `PointerDrag` 状态，而不是再挂一套 document-level listener：pointerdown 先 capture，200ms 内跨过 8px 阈值就直接启动拖拽；计时器先到则切换为 selection mode，后续 pointermove 只刷选 handle，pointerup 清理状态并保留选区。
+- `mobileBlockInteractions` 默认关闭，原因是用户已有 Surface/触控路径，必须先保证旧行为不变；开启后仍复用 `multiBlockSelection`、`Larger touch handles`、Surface Pen 开关和原有 cleanup。resize handles 与移动工具栏另批实现，不能在设置说明中声称已经提供。

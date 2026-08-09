@@ -399,3 +399,77 @@
 - 已锁定设置提案和许可边界：设置按功能分组、条件展示并使用 schema migration；移动 selection mode 与有序列表重编号默认关闭；实质移植代码/测试时补 Ariestar MIT notices，不引入 `md-dragger` 运行时依赖。
 - 本轮只更新规划文件，没有修改业务源码、依赖、README、构建产物或部署目录，也没有运行 lint/typecheck/test/build。阶段 7 的未提交实现完整保留，等待用户明确说“开始执行”后才进入 8.0。
 - 只读恢复时，并行读取大体量技能/规划文件在 10 秒限制下超时 1 次，随后改为分批完整读取；末次检索误传不存在的 `README_zh.md` 导致 `rg` 返回 1，但有效匹配已保留，未发生写入或重复失败操作。
+
+## 会话：2026-08-07（阶段 8.0 开始执行）
+
+- 用户明确说“开始执行”，阶段 8 从规划状态切换为 `in_progress`；先执行 8.0，不跳到结构重排或移动端功能。
+- 已完整读取当前 `task_plan.md`、`findings.md`、`progress.md`、`AGENTS.md`、`planning-with-files-zh`、Obsidian 主技能及本批所需的生命周期、文件操作、类型安全、UI、CSS、无障碍和代码质量 reference。
+- 发现 `AGENTS.md` 仍记录阶段 6 的旧交接点；已同步为阶段 8，并明确阶段 7 实机验收独立保留、事件单一提交、HTML5 跨弹窗链路和现有块安全边界。
+- 当前工作树干净，阶段 7 已在 `11f35d6` 提交；没有未提交源码需要迁移或保护。
+- 8.0 现状基线：`npm.cmd run lint` 通过、`npm.cmd run typecheck` 通过、`npm.cmd run test` 通过（10 files / 74 tests）、`npm.cmd run build` 通过。
+- 下一步：读取并拆分 `DragSessionManager`、编辑器手柄、Markdown drop 和设置模型的职责，先建立事件唯一所有权与行为等价测试，再实施最小职责抽取。
+
+### 本轮实施结果
+
+- 新增 `src/drag-commit-gate.ts`：Canvas/Markdown 提交入口共享 session 级 claim，重复事件只能由首个 owner 继续；`cleanupDrag()` 释放 claim。
+- 新增 `src/drag-selection.ts`：抽取原有手柄与编辑器多 range 选区映射逻辑，`DragSessionManager` 只负责提供当前 CodeMirror state 和 handle ranges。
+- `settings-model.ts` 新增 `schemaVersion = 1`、旧数据迁移和四个数值字段的读取 clamp；保留现有 Markdown/Canvas 动作绑定与阶段 6 默认值。
+- `settings-tab.ts` 已按五个功能组整理，并为固定文件夹、列表父项显示增加条件展示；修饰键仍按动作配置。
+- 新增提交门禁、选区抽取、schema migration/clamp 测试；当前为 12 个测试文件、82 个测试通过。
+- 首次 lint 因设置迁移后旧测试的一处不必要类型断言失败，删除断言后恢复；随后 lint、typecheck、test 均通过，尚未重新运行最终 build。
+
+### 下一步
+
+- 运行最终 lint/typecheck/test/build，并核对生成物。
+- 进入 8.1：仅在动作解析为 `move` 时接入结构化同文档重排；先实现 selection snapshot、精确 drop resolution 和列表 intent 的纯模型，再接入输入与自动滚动。
+
+### 阶段 8.1 首批实施结果
+
+- 新增 `markdown-structure.ts`：列表 line parser、`sibling | child | outdent` intent、相对缩进 planner、源范围/容器内部 drop 校验和结构化 move 包装器。
+- Markdown drop target 现在记录目标行、列表 intent 和可解释 issue；`move` 在 issue 存在时 dropEffect 为 `none`，真正 drop 时以 Notice 说明原因；`embed-source` 不受结构规则影响。
+- 新增 `drag-auto-scroll.ts` 与设置 `edgeAutoScroll`、`autoScrollEdgePx`、`autoScrollMaxSpeed`；默认值为 true、60、12，滚动后重算落点。
+- 修复 `boundaryInsertion` 对列表文本使用 `trim()` 会吞掉前导缩进的问题，改为仅去除尾随空白；新增 4 个结构测试和 2 个自动滚动测试，当前测试数量继续增加。
+- 8.1 尚未完成：Callout lazy continuation 的完整容器边界、普通/列表/源范围高亮和 drop snapshot 的可视化状态仍需下一小批实现。
+
+### 8.1 收口
+
+- 完成容器内部落点校验：frontmatter、表格、围栏、引用/Callout lazy continuation 与水平线的危险内部位置会显示 invalid 分界线并在 move drop 时拒绝。
+- 完成 drop snapshot 可视化：源 `.cm-line` 高亮、目标行高亮、child/outdent 色带、invalid 红色分界线；cleanup、取消、Escape 和 unload 统一清理。
+- 8.1 纯模型与构建验证通过；当前进入 8.2 桌面多块选择。
+
+### 8.2 首批实施结果
+
+- 新增 `block-selection.ts` 与测试：连续扩展、稳定 key、非连续 toggle。
+- `DragStarter` 增加抓手 pointerdown 仲裁；Shift 立即选区，Ctrl/Cmd 点击在原生拖拽尚未发生时 toggle，500ms 长按进入纵向刷选。
+- 选中 handle 使用 `data-dragdrop-handle-from/to`、`aria-pressed` 和 scoped CSS；拖动任一已选 handle 时 `startSession` 复用同一个范围 snapshot，因此无修饰键仍按块生成多个 embed，move 仍走现有整体 transaction。
+- Escape、pointercancel、窗口关闭和插件卸载清理 selection pointer；`multiBlockSelection` 设置默认开启，可关闭整套桌面多选增强。
+- 8.2 尚待补充：editable embed 编辑态、输入控件、Canvas 内嵌编辑器和表格 cell 的结构拖拽禁用，以及本批完整实机验收。
+
+### 8.3 收口与 8.4 首批结果
+
+- 8.3 已实现并通过自动化验证：原生 `Menu`、单/多块 Copy/Cut/Delete、ID 风险确认、单块安全转换、clipboard 成功后 Cut 删除；新增 `markdown-block-actions.ts` 及测试。
+- 8.4 新增 `crossFileFileTargets` 设置与文件目标识别：文件树 Markdown 项和正文内部链接可作为追加到文末目标；嵌入和剪切搬移共用 Markdown action 解析与 ID/只读约束。
+- 文件目标写入使用 `vault.process` 的内容 revision guard；先提交源 editor，目标写入失败时按 sourceAfter 条件回滚源，避免目标已变化时覆盖用户修改。
+- 8.4 尚待补齐：同文件不同分栏的 revision identity、多源文件 transaction，以及 file target 的 Obsidian 实机验证。
+
+### 2026-08-07：阶段 8.4/8.5 继续实施
+
+- 同文件不同分栏的 Markdown drop 现在按规范化 `TFile.path` 与拖拽开始时的完整 CodeMirror document revision 判断；同一文件的两个 editor 不再各自写入，提交只 dispatch 源 editor，避免双写和偏移竞争。
+- 新增 `markdown-transaction.ts`：单源跨文件 file target 的 source editor + `vault.process` 目标写入共用两阶段协调器；目标 revision 不匹配、写入异常或回滚异常都会被显式记录并 Notice，禁止静默留下半完成搬移。
+- 新增 `preserveFoldState` 设置并接入 CodeMirror `foldedRanges`/`foldEffect` 能力守卫；结构化 Move 记录折叠行起点，文档重排后按新位置尝试恢复，能力缺失时只丢失视觉折叠，不回滚已成功文本事务。
+- 新增 `handlePosition`（默认 right）与 `handleVisibility`（默认 hover）设置；仍复用普通块 inline handle 和 Callout gutter 底座，主窗口、弹出窗口和窗口重建时同步 body class。
+- 新增 `renumberOrderedLists` 设置，默认关闭；开启时仅在 Move 提交后重排连续有序列表 marker，围栏代码不参与；关闭时保留原 marker。
+- 新增事务、折叠位置、重编号和设置默认值测试。当前自动化结果：17 个测试文件 / 100 个测试在事务首批通过，加入 8.5 后为 18 个测试文件 / 102 个测试；最终 lint/typecheck/build 仍需在本批收口时再跑一次。
+- 本批未复制 Ariestar 的实质源码或测试，暂不新增第三方 notices；README 已同步结构 Move、文件目标、跨文件回滚、折叠和手柄设置说明。
+
+### 2026-08-07：本批质量检查
+
+- 运行 `npm.cmd run lint`、`npm.cmd run typecheck`、`npm.cmd run test`、`npm.cmd run build` 和 `node --check main.js`：全部通过；当前测试为 18 个文件 / 102 个用例，lint 无 warning。
+- 尚未进行 Obsidian 实机验证、发布目录部署或 Git commit；阶段 8 仍保持 `in_progress`，多源事务、菜单无障碍细节、移动端 selection mode/resize handles 及分批实机验收仍未完成。
+
+### 2026-08-07：阶段 8.6 首批
+
+- 新增 `mobileBlockInteractions` 设置，默认关闭；启用后复用现有 Markdown handle 的 Pointer capture，在 200ms 长按后进入选区刷选，短移动在计时器到期前仍启动原有拖拽，点按仍选择单块。
+- 移动 selection mode 不新增 document 级 pointer listener，也不触碰 Surface Pen 侧键路径；resize handles、拖拽模式切换和移动工具栏命令仍未实现，避免把半成品伪装成完整移动端能力。
+- 运行 lint/typecheck/test/build/node check：全部通过，18 个测试文件 / 102 个用例，0 lint warning。
+- 已将 `manifest.json`、`main.js`、`styles.css` 同步到 `.obsidian/plugins/dragdrop` 与 `plugins-dev/plugin`；三处文件的 SHA-256 均一致。没有覆盖两个目标目录中的 `data.json` 或其他用户文件。

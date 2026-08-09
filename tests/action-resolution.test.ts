@@ -108,7 +108,7 @@ describe("settings merging", () => {
   it("drops the removed protected-folder setting from legacy data", () => {
     const merged = mergeSettings({
       protectedFolders: ["Capture"],
-    } as unknown as Partial<typeof DEFAULT_SETTINGS>);
+    });
 
     expect(Object.hasOwn(merged, "protectedFolders")).toBe(false);
   });

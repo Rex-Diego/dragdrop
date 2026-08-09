@@ -6,6 +6,7 @@ import {
   MarkdownView,
   Notice,
   parseLinktext,
+  Menu,
   TFile,
   type App,
   type WorkspaceLeaf,
@@ -19,10 +20,26 @@ import { applyBlockIdInsertions, ensurePlannedReference, sourceSubpath } from ".
 import { CanvasAdapter, type CanvasDropTarget, type CanvasItemSpec } from "./canvas-adapter";
 import { planCanvasReferences, type CanvasReference } from "./canvas-reference";
 import { buildHandleRanges, collectSourceUnits, previewMarkdownForUnits } from "./content-segmentation";
-import type { HandleRange, SourceRange } from "./content-segmentation";
+import type { HandleRange } from "./content-segmentation";
+import { edgeScrollDelta } from "./drag-auto-scroll";
+import {
+  blockSelectionKey,
+  extendBlockSelection,
+  toggleBlockSelection,
+} from "./block-selection";
+import { sourceRangesForHandle } from "./drag-selection";
+import { DragCommitGate } from "./drag-commit-gate";
 import type { DragStarter } from "./drag-handle-extension";
 import { FileService, type NoteSourceReference } from "./file-service";
 import { MoveConfirmationModal } from "./move-confirmation-modal";
+import { runMarkdownTransaction, type MarkdownMutation } from "./markdown-transaction";
+import {
+  canConvertMarkdownBlock,
+  conversionLabel,
+  convertMarkdownBlock,
+  MARKDOWN_BLOCK_CONVERSIONS,
+  type MarkdownBlockConversion,
+} from "./markdown-block-actions";
 import {
   applyTextChanges,
   chooseMarkdownDropPosition,
@@ -30,11 +47,24 @@ import {
   directBlockEmbed,
   insertBlocksAtBoundary,
   mapPositionAfterChanges,
-  planMarkdownMove,
+  mapPositionAfterInsertion,
+  mapPositionAfterMove,
+  mapPositionAfterRemovals,
   removeTextRanges,
   requiresMoveConfirmation,
   type TextChange,
 } from "./markdown-drop";
+import {
+  findMoveTargetIssue,
+  adjustListBlockIndent,
+  planStructuredMarkdownMove,
+  renumberOrderedListMarkers,
+  resolveListDropIntent,
+  structuredMoveBlocks,
+  type ListDropIntent,
+  type MarkdownDropIssue,
+} from "./markdown-structure";
+import { captureFoldStarts, restoreFoldStarts } from "./fold-state";
 import type { DragSession, SourceUnit } from "./model";
 import {
   canvasPenButtonForInteraction,
@@ -48,6 +78,7 @@ import type { DragDropSettings } from "./settings-model";
 import { isCanvasView, type CanvasView } from "./canvas-types";
 
 const SESSION_MIME = "application/x-dragdrop-session";
+const MOBILE_SELECTION_DELAY_MS = 200;
 
 interface DragDropHost {
   app: App;
@@ -63,12 +94,30 @@ interface PointerDrag {
   startX: number;
   startY: number;
   active: boolean;
+  mobileSelectionMode: boolean;
+  mobileSelectionTimer: number | null;
 }
 
 interface PointerCaptureElement extends Element {
   setPointerCapture(pointerId: number): void;
   releasePointerCapture(pointerId: number): void;
   hasPointerCapture(pointerId: number): boolean;
+}
+
+interface BlockSelectionState {
+  editorState: EditorState;
+  anchorFrom: number;
+  ranges: HandleRange[];
+}
+
+interface SelectionPointer {
+  pointerId: number;
+  view: EditorView;
+  handle: HandleRange;
+  element: HTMLElement;
+  active: boolean;
+  toggleSelection: boolean;
+  timer: number | null;
 }
 
 interface CanvasPenDrag {
@@ -93,6 +142,15 @@ interface MarkdownDropTarget {
   editorView: EditorView;
   file: TFile;
   position: number;
+  targetLineText: string;
+  targetLineNumber: number;
+  listIntent: ListDropIntent | null;
+  issue: MarkdownDropIssue | null;
+  ownerDocument: Document;
+}
+
+interface MarkdownFileDropTarget {
+  file: TFile;
   ownerDocument: Document;
 }
 
@@ -135,9 +193,12 @@ function textNodeLink(path: string, subpath: string, alias: string): string {
 
 export class DragSessionManager extends Component implements DragStarter {
   private readonly canvasAdapter: CanvasAdapter;
+  private readonly commitGate = new DragCommitGate();
   private readonly documentComponents = new Map<Document, Component>();
+  private readonly blockSelections = new Map<EditorView, BlockSelectionState>();
   private session: DragSession | null = null;
   private pointerDrag: PointerDrag | null = null;
+  private selectionPointer: SelectionPointer | null = null;
   private canvasPenDrag: CanvasPenDrag | null = null;
   private canvasPenContextMenuSuppression: CanvasPenContextMenuSuppression | null = null;
   private readonly syntheticCanvasEvents = new WeakSet<Event>();
@@ -147,6 +208,12 @@ export class DragSessionManager extends Component implements DragStarter {
   private markdownDropAction: ResolvedMarkdownDropAction | null = null;
   private markdownDropDocument: Document | null = null;
   private markdownDropLine: HTMLElement | null = null;
+  private autoScrollFrame: number | null = null;
+  private autoScrollTarget: MarkdownDropTarget | null = null;
+  private autoScrollX = 0;
+  private autoScrollY = 0;
+  private sourceHighlightElements: HTMLElement[] = [];
+  private targetHighlightElements: HTMLElement[] = [];
 
   constructor(private readonly host: DragDropHost) {
     super();
@@ -178,10 +245,129 @@ export class DragSessionManager extends Component implements DragStarter {
 
   onunload(): void {
     this.cleanupDrag();
+    this.cancelSelectionPointer();
+    this.blockSelections.clear();
     this.documentComponents.clear();
   }
 
+  handleHandlePointerDown(
+    event: PointerEvent,
+    view: EditorView,
+    handle: HandleRange,
+    element: HTMLElement,
+  ): boolean {
+    this.clearStaleBlockSelection(view);
+    if (this.isStructuralDragBlocked(view, element)) {
+      event.preventDefault();
+      event.stopPropagation();
+      return true;
+    }
+    if (!this.host.config.multiBlockSelection) return false;
+    if (event.shiftKey) {
+      event.preventDefault();
+      event.stopPropagation();
+      const current = this.blockSelections.get(view);
+      const anchorFrom = current?.anchorFrom ?? handle.from;
+      const ranges = extendBlockSelection(
+        buildHandleRanges(view.state),
+        anchorFrom,
+        handle.from,
+      );
+      this.setBlockSelection(view, ranges.length > 0 ? ranges : [handle], anchorFrom);
+      view.focus();
+      return true;
+    }
+
+    if (event.pointerType === "mouse" && event.isPrimary) {
+      this.scheduleMouseSelection(
+        view,
+        handle,
+        element,
+        event.pointerId,
+        event.ctrlKey || event.metaKey,
+      );
+    }
+    return false;
+  }
+
+  openHandleMenu(
+    event: MouseEvent,
+    view: EditorView,
+    handle: HandleRange,
+    _element: HTMLElement,
+  ): boolean {
+    if (!this.host.config.blockTypeMenu) return false;
+    const units = this.unitsForHandle(view, handle);
+    if (units.length === 0) return false;
+
+    event.preventDefault();
+    event.stopPropagation();
+    const menu = new Menu().setParentElement(view.dom.ownerDocument.body);
+    menu.onHide(() => view.focus());
+    const writable = this.isEditorWritable(view);
+    const selectedLabel = units.length === 1 ? "block" : "selected blocks";
+
+    menu.addItem((item) =>
+      item
+        .setTitle(`Copy ${selectedLabel}`)
+        .setIcon("copy")
+        .onClick(() => {
+          void this.copyBlocks(view, units);
+        }),
+    );
+    menu.addItem((item) =>
+      item
+        .setTitle(`Cut ${selectedLabel}`)
+        .setIcon("scissors")
+        .setDisabled(!writable)
+        .onClick(() => {
+          void this.cutBlocks(view, units);
+        }),
+    );
+    menu.addItem((item) =>
+      item
+        .setTitle(`Delete ${selectedLabel}`)
+        .setIcon("trash-2")
+        .setDisabled(!writable)
+        .setWarning(true)
+        .onClick(() => {
+          void this.deleteBlocks(view, units);
+        }),
+    );
+
+    if (units.length === 1) {
+      menu.addSeparator();
+      for (const conversion of MARKDOWN_BLOCK_CONVERSIONS) {
+        const allowed = canConvertMarkdownBlock(units[0], conversion);
+        menu.addItem((item) =>
+          item
+            .setTitle(`Convert to ${conversionLabel(conversion).toLowerCase()}`)
+            .setIcon("wand-2")
+            .setDisabled(!writable || !allowed)
+            .onClick(() => {
+              void this.convertBlock(view, units[0], conversion);
+            }),
+        );
+      }
+    }
+
+    menu.showAtMouseEvent(event);
+    return true;
+  }
+
   beginDrag(event: DragEvent, view: EditorView, handle: HandleRange): void {
+    this.cancelSelectionPointer();
+    if (
+      this.isStructuralDragBlocked(
+        view,
+        isNodeLike(event.currentTarget) && isElementNode(event.currentTarget)
+          ? event.currentTarget
+          : null,
+      )
+    ) {
+      event.preventDefault();
+      return;
+    }
     if (this.pointerDrag) {
       event.preventDefault();
       return;
@@ -205,6 +391,11 @@ export class DragSessionManager extends Component implements DragStarter {
     handle: HandleRange,
     element: HTMLElement,
   ): void {
+    if (this.isStructuralDragBlocked(view, element)) {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
     const supportedPointer = event.pointerType === "touch" || event.pointerType === "pen";
     const sideButton = isSurfacePenSideButton(event);
     if (
@@ -228,10 +419,30 @@ export class DragSessionManager extends Component implements DragStarter {
       startX: event.clientX,
       startY: event.clientY,
       active: false,
+      mobileSelectionMode: false,
+      mobileSelectionTimer: null,
     };
+    if (
+      this.host.config.mobileBlockInteractions &&
+      this.host.config.multiBlockSelection &&
+      !sideButton
+    ) {
+      const ownerWindow = element.ownerDocument.defaultView;
+      if (ownerWindow) {
+        const pointerDrag = this.pointerDrag;
+        pointerDrag.mobileSelectionTimer = ownerWindow.setTimeout(() => {
+          if (this.pointerDrag !== pointerDrag || pointerDrag.active) return;
+          pointerDrag.mobileSelectionMode = true;
+          pointerDrag.mobileSelectionTimer = null;
+          this.setBlockSelection(view, [handle], handle.from);
+          view.focus();
+        }, MOBILE_SELECTION_DELAY_MS);
+      }
+    }
     try {
       element.setPointerCapture(event.pointerId);
     } catch {
+      this.clearMobileSelectionTimer(this.pointerDrag);
       this.pointerDrag = null;
     }
   }
@@ -240,6 +451,21 @@ export class DragSessionManager extends Component implements DragStarter {
     const pointerDrag = this.pointerDrag;
     if (!pointerDrag || !matchesPointerDrag(pointerDrag.pointerId, event.pointerId)) return;
     event.preventDefault();
+
+    if (pointerDrag.mobileSelectionMode) {
+      const handle = this.handleAtPoint(pointerDrag.view, event.clientX, event.clientY);
+      if (handle) {
+        const ranges = extendBlockSelection(
+          buildHandleRanges(pointerDrag.view.state),
+          pointerDrag.handle.from,
+          handle.from,
+        );
+        if (ranges.length > 0) {
+          this.setBlockSelection(pointerDrag.view, ranges, pointerDrag.handle.from);
+        }
+      }
+      return;
+    }
 
     if (!pointerDrag.active) {
       if (
@@ -252,6 +478,7 @@ export class DragSessionManager extends Component implements DragStarter {
       ) {
         return;
       }
+      this.clearMobileSelectionTimer(pointerDrag);
       if (!this.startSession(pointerDrag.view, pointerDrag.handle)) {
         this.cancelPointerDrag(event.pointerId);
         return;
@@ -266,9 +493,18 @@ export class DragSessionManager extends Component implements DragStarter {
   }
 
   async endPointerDrag(event: PointerEvent): Promise<void> {
+    if (this.finishSelectionPointer(event.pointerId)) {
+      event.preventDefault();
+      return;
+    }
     const pointerDrag = this.pointerDrag;
     if (!pointerDrag || !matchesPointerDrag(pointerDrag.pointerId, event.pointerId)) return;
     event.preventDefault();
+
+    if (pointerDrag.mobileSelectionMode) {
+      this.cleanupDrag();
+      return;
+    }
 
     if (!pointerDrag.active) {
       this.selectHandle(pointerDrag.view, pointerDrag.handle);
@@ -290,15 +526,28 @@ export class DragSessionManager extends Component implements DragStarter {
   }
 
   cancelPointerDrag(pointerId: number): void {
+    if (this.finishSelectionPointer(pointerId)) return;
     if (!this.pointerDrag || !matchesPointerDrag(this.pointerDrag.pointerId, pointerId)) return;
     this.cleanupDrag();
+  }
+
+  private clearMobileSelectionTimer(pointerDrag: PointerDrag): void {
+    if (pointerDrag.mobileSelectionTimer === null) return;
+    const ownerWindow = pointerDrag.element.ownerDocument.defaultView;
+    ownerWindow?.clearTimeout(pointerDrag.mobileSelectionTimer);
+    pointerDrag.mobileSelectionTimer = null;
   }
 
   private startSession(view: EditorView, handle: HandleRange): DragSession | null {
     const sourceFile = this.findMarkdownFile(view);
     if (!sourceFile) return null;
 
-    const ranges = this.sourceRanges(view.state, handle);
+    const selectedRanges = this.selectedRangesForDrag(view, handle);
+    const ranges = selectedRanges ?? sourceRangesForHandle(
+      view.state,
+      handle,
+      buildHandleRanges(view.state),
+    );
     const units = collectSourceUnits(
       view.state,
       ranges,
@@ -317,7 +566,9 @@ export class DragSessionManager extends Component implements DragStarter {
       units,
       previewMarkdown: previewMarkdownForUnits(units),
     };
+    this.commitGate.begin(id);
     this.session = session;
+    this.renderSourceHighlight(session);
     return session;
   }
 
@@ -327,6 +578,319 @@ export class DragSessionManager extends Component implements DragStarter {
       scrollIntoView: true,
     });
     view.focus();
+  }
+
+  private scheduleMouseSelection(
+    view: EditorView,
+    handle: HandleRange,
+    element: HTMLElement,
+    pointerId: number,
+    toggleSelection: boolean,
+  ): void {
+    if (!this.host.config.multiBlockSelection) return;
+    this.cancelSelectionPointer();
+    const ownerWindow = element.ownerDocument.defaultView;
+    if (!ownerWindow) return;
+
+    const selectionPointer: SelectionPointer = {
+      pointerId,
+      view,
+      handle,
+      element,
+      active: false,
+      toggleSelection,
+      timer: null,
+    };
+    selectionPointer.timer = ownerWindow.setTimeout(() => {
+      if (this.selectionPointer !== selectionPointer) return;
+      selectionPointer.timer = null;
+      selectionPointer.active = true;
+      selectionPointer.element.draggable = false;
+      this.setBlockSelection(view, [handle], handle.from);
+      view.focus();
+    }, 500);
+    this.selectionPointer = selectionPointer;
+  }
+
+  private handleSelectionPointerMove(event: PointerEvent): void {
+    const selectionPointer = this.selectionPointer;
+    if (
+      !selectionPointer ||
+      !selectionPointer.active ||
+      selectionPointer.pointerId !== event.pointerId
+    ) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    const handle = this.handleAtPoint(selectionPointer.view, event.clientX, event.clientY);
+    if (!handle) return;
+    const ranges = extendBlockSelection(
+      buildHandleRanges(selectionPointer.view.state),
+      selectionPointer.handle.from,
+      handle.from,
+    );
+    if (ranges.length > 0) {
+      this.setBlockSelection(selectionPointer.view, ranges, selectionPointer.handle.from);
+    }
+  }
+
+  private handleAtPoint(view: EditorView, clientX: number, clientY: number): HandleRange | null {
+    const element = view.dom.ownerDocument
+      .elementFromPoint(clientX, clientY)
+      ?.closest<HTMLElement>(".dragdrop-handle");
+    if (!element || !view.dom.contains(element)) return null;
+    const from = Number.parseInt(element.dataset.dragdropHandleFrom ?? "", 10);
+    const to = Number.parseInt(element.dataset.dragdropHandleTo ?? "", 10);
+    if (!Number.isFinite(from) || !Number.isFinite(to)) return null;
+    return (
+      buildHandleRanges(view.state).find((range) => range.from === from && range.to === to) ?? null
+    );
+  }
+
+  private finishSelectionPointer(pointerId: number): boolean {
+    const selectionPointer = this.selectionPointer;
+    if (!selectionPointer || selectionPointer.pointerId !== pointerId) return false;
+    if (!selectionPointer.active && selectionPointer.toggleSelection) {
+      const handles = buildHandleRanges(selectionPointer.view.state);
+      const current = this.blockSelections.get(selectionPointer.view);
+      const selected = current?.editorState === selectionPointer.view.state
+        ? current.ranges
+        : [];
+      const ranges = toggleBlockSelection(handles, selected, selectionPointer.handle);
+      if (ranges.length === 0) this.clearBlockSelection(selectionPointer.view);
+      else this.setBlockSelection(
+        selectionPointer.view,
+        ranges,
+        current?.anchorFrom ?? selectionPointer.handle.from,
+      );
+    }
+    this.clearSelectionPointerTimer(selectionPointer);
+    if (selectionPointer.active) selectionPointer.element.draggable = true;
+    this.selectionPointer = null;
+    return true;
+  }
+
+  private cancelSelectionPointer(): void {
+    const selectionPointer = this.selectionPointer;
+    if (!selectionPointer) return;
+    this.clearSelectionPointerTimer(selectionPointer);
+    if (selectionPointer.active) selectionPointer.element.draggable = true;
+    this.selectionPointer = null;
+  }
+
+  private clearSelectionPointerTimer(selectionPointer: SelectionPointer): void {
+    if (selectionPointer.timer === null) return;
+    const ownerWindow = selectionPointer.element.ownerDocument.defaultView;
+    ownerWindow?.clearTimeout(selectionPointer.timer);
+    selectionPointer.timer = null;
+  }
+
+  private clearStaleBlockSelection(view: EditorView): void {
+    const selection = this.blockSelections.get(view);
+    if (selection && selection.editorState !== view.state) this.clearBlockSelection(view);
+  }
+
+  private setBlockSelection(
+    view: EditorView,
+    ranges: readonly HandleRange[],
+    anchorFrom: number,
+  ): void {
+    this.blockSelections.set(view, {
+      editorState: view.state,
+      anchorFrom,
+      ranges: [...ranges],
+    });
+    this.renderBlockSelection(view);
+  }
+
+  private clearBlockSelection(view: EditorView): void {
+    this.blockSelections.delete(view);
+    this.renderBlockSelection(view);
+  }
+
+  private clearBlockSelectionsInDocument(document: Document): void {
+    for (const view of this.blockSelections.keys()) {
+      if (view.dom.ownerDocument === document) this.clearBlockSelection(view);
+    }
+  }
+
+  private renderBlockSelection(view: EditorView): void {
+    const selected = new Set(
+      (this.blockSelections.get(view)?.ranges ?? []).map((range) => blockSelectionKey(range)),
+    );
+    view.dom.querySelectorAll<HTMLElement>(".dragdrop-handle").forEach((element) => {
+      const from = Number.parseInt(element.dataset.dragdropHandleFrom ?? "", 10);
+      const to = Number.parseInt(element.dataset.dragdropHandleTo ?? "", 10);
+      const isSelected = Number.isFinite(from) && Number.isFinite(to)
+        ? selected.has(blockSelectionKey({ from, to }))
+        : false;
+      element.classList.toggle("dragdrop-handle-selected", isSelected);
+      element.setAttribute("aria-pressed", isSelected ? "true" : "false");
+    });
+  }
+
+  private selectedRangesForDrag(view: EditorView, handle: HandleRange): HandleRange[] | null {
+    if (!this.host.config.multiBlockSelection) return null;
+    this.clearStaleBlockSelection(view);
+    const selection = this.blockSelections.get(view);
+    if (!selection) return null;
+    const selected = new Set(selection.ranges.map((range) => blockSelectionKey(range)));
+    if (!selected.has(blockSelectionKey(handle))) return null;
+    return selection.ranges;
+  }
+
+  private unitsForHandle(view: EditorView, handle: HandleRange): SourceUnit[] {
+    const ranges = this.selectedRangesForDrag(view, handle) ?? sourceRangesForHandle(
+      view.state,
+      handle,
+      buildHandleRanges(view.state),
+    );
+    return collectSourceUnits(
+      view.state,
+      ranges,
+      this.host.config.splitListItems,
+      this.host.config.listParentDisplay,
+    );
+  }
+
+  private async copyBlocks(view: EditorView, units: readonly SourceUnit[]): Promise<boolean> {
+    const content = units.map((unit) => unit.text.trimEnd()).join("\n\n");
+    const copied = await this.writeClipboard(view, content);
+    if (!copied) new Notice("Could not copy the selected Markdown blocks.");
+    return copied;
+  }
+
+  private async cutBlocks(view: EditorView, units: readonly SourceUnit[]): Promise<void> {
+    if (!this.isEditorWritable(view)) {
+      new Notice("The note is read-only.");
+      return;
+    }
+    if (requiresMoveConfirmation(units)) {
+      const confirmed = await new MoveConfirmationModal(
+        this.host.app,
+        units.filter((unit) => unit.existingBlockId !== undefined).length,
+        "cut",
+      ).openAndConfirm();
+      if (!confirmed) return;
+    }
+    if (!(await this.copyBlocks(view, units))) return;
+    void this.deleteBlocks(view, units, true);
+  }
+
+  private async deleteBlocks(
+    view: EditorView,
+    units: readonly SourceUnit[],
+    skipConfirmation = false,
+  ): Promise<void> {
+    if (!this.isEditorWritable(view)) {
+      new Notice("The note is read-only.");
+      return;
+    }
+    if (!skipConfirmation && requiresMoveConfirmation(units)) {
+      const confirmed = await new MoveConfirmationModal(
+        this.host.app,
+        units.filter((unit) => unit.existingBlockId !== undefined).length,
+        "delete",
+      ).openAndConfirm();
+      if (!confirmed) return;
+    }
+
+    const before = view.state.doc.toString();
+    if (units.some((unit) => view.state.doc.sliceString(unit.from, unit.to) !== unit.text)) {
+      new Notice("The note changed while the menu was open. Try again.");
+      return;
+    }
+    const after = removeTextRanges(before, units);
+    if (after === before) return;
+    try {
+      view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: after } });
+      this.clearBlockSelection(view);
+      view.focus();
+    } catch (error) {
+      console.error("DragDrop could not delete Markdown blocks.", error);
+      new Notice("Could not delete the selected Markdown blocks.");
+    }
+  }
+
+  private async convertBlock(
+    view: EditorView,
+    unit: SourceUnit,
+    conversion: MarkdownBlockConversion,
+  ): Promise<void> {
+    if (!this.isEditorWritable(view) || !canConvertMarkdownBlock(unit, conversion)) return;
+    if (view.state.doc.sliceString(unit.from, unit.to) !== unit.text) {
+      new Notice("The note changed while the menu was open. Try again.");
+      return;
+    }
+    const converted = convertMarkdownBlock(unit.text, conversion);
+    if (converted === null) return;
+    if (unit.existingBlockId !== undefined && !converted.includes(`^${unit.existingBlockId}`)) {
+      new Notice("Conversion was cancelled because it would lose the block ID.");
+      return;
+    }
+    try {
+      view.dispatch({ changes: { from: unit.from, to: unit.to, insert: converted } });
+      this.clearBlockSelection(view);
+      view.focus();
+    } catch (error) {
+      console.error("DragDrop could not convert a Markdown block.", error);
+      new Notice("Could not convert the Markdown block.");
+    }
+  }
+
+  private async writeClipboard(view: EditorView, content: string): Promise<boolean> {
+    const ownerDocument = view.dom.ownerDocument;
+    const ownerWindow = ownerDocument.defaultView;
+    const clipboard = ownerWindow?.navigator.clipboard;
+    if (clipboard) {
+      try {
+        await clipboard.writeText(content);
+        return true;
+      } catch {
+        // Fall through to the owner-document execCommand fallback.
+      }
+    }
+
+    const helper = ownerDocument.body.createEl("textarea");
+    helper.className = "dragdrop-clipboard-helper";
+    helper.value = content;
+    ownerDocument.body.appendChild(helper);
+    helper.focus();
+    helper.select();
+    let copied = false;
+    try {
+      const execCommand = Reflect.get(ownerDocument, "execCommand");
+      if (typeof execCommand === "function") {
+        copied = Reflect.apply(execCommand, ownerDocument, ["copy"]) === true;
+      }
+    } catch {
+      copied = false;
+    }
+    helper.remove();
+    view.focus();
+    return copied;
+  }
+
+  private isStructuralDragBlocked(view: EditorView, element: Element | null): boolean {
+    if (
+      element?.closest(
+        ".dragdrop-editable-block-embed-active, input, textarea, select, .cm-table-widget",
+      )
+    ) {
+      return true;
+    }
+
+    const activeElement = view.dom.ownerDocument.activeElement;
+    if (!activeElement || !view.dom.contains(activeElement)) return false;
+    if (
+      activeElement.closest(
+        ".dragdrop-editable-block-embed-active, input, textarea, select, .cm-table-widget",
+      )
+    ) {
+      return true;
+    }
+    return activeElement.tagName === "INPUT" || activeElement.tagName === "TEXTAREA";
   }
 
   private findPointerDropTarget(
@@ -367,20 +931,81 @@ export class DragSessionManager extends Component implements DragStarter {
     const editorView = EditorView.findFromDOM(editorElement as HTMLElement);
     if (!editorView || editorView.dom.ownerDocument !== ownerDocument) return null;
 
+    const position = this.markdownDropPosition(editorView, event);
+    const rawPosition = editorView.posAtCoords({ x: event.clientX, y: event.clientY }) ?? position;
+    const targetLine = editorView.state.doc.lineAt(rawPosition);
+    const sourceText = this.session?.units[0]?.text ?? "";
+    const sameSourceFile = this.session?.sourceFile.path === view.file.path;
+    const listIntent = resolveListDropIntent({
+      sourceText,
+      targetLineText: targetLine.text,
+      pointerColumn: rawPosition - targetLine.from,
+      contextLineNumber: targetLine.number,
+    });
+
     return {
       view,
       editorView,
       file: view.file,
-      position: this.markdownDropPosition(editorView, event),
+      position,
+      targetLineText: targetLine.text,
+      targetLineNumber: targetLine.number,
+      listIntent,
+      issue: findMoveTargetIssue(
+        editorView.state.doc.toString(),
+        sameSourceFile ? this.session?.units ?? [] : [],
+        position,
+      ),
       ownerDocument,
     };
   }
 
+  private findMarkdownFileDropTarget(event: DragEvent): MarkdownFileDropTarget | null {
+    if (!this.host.config.crossFileFileTargets) return null;
+    const eventTarget = isNodeLike(event.target) ? event.target : null;
+    const ownerDocument = eventTarget?.ownerDocument ?? activeDocument;
+    const pointElement = ownerDocument.elementFromPoint(event.clientX, event.clientY);
+    const candidates = [
+      ...event.composedPath(),
+      ...(pointElement ? [pointElement] : []),
+      ...(eventTarget ? [eventTarget] : []),
+    ];
+
+    for (const candidate of candidates) {
+      if (!isNodeLike(candidate) || !isElementNode(candidate)) continue;
+      const navFile = candidate.closest<HTMLElement>(".nav-file-title[data-path]");
+      const navPath = navFile?.getAttribute("data-path");
+      if (navPath) {
+        const file = this.host.app.vault.getAbstractFileByPath(navPath);
+        if (file instanceof TFile && file.extension === "md") {
+          return { file, ownerDocument };
+        }
+      }
+
+      const internalLink = candidate.closest<HTMLElement>("a.internal-link[data-href], a.internal-link[href]");
+      const linkText = internalLink?.getAttribute("data-href") ?? internalLink?.getAttribute("href");
+      if (!linkText) continue;
+      const parsed = parseLinktext(linkText);
+      const file = this.host.app.metadataCache.getFirstLinkpathDest(
+        parsed.path,
+        this.session?.sourceFile.path ?? "",
+      );
+      if (file instanceof TFile && file.extension === "md") {
+        return { file, ownerDocument };
+      }
+    }
+    return null;
+  }
+
   private markdownDropPosition(editorView: EditorView, event: DragEvent): number {
+    return this.markdownDropPositionAt(editorView, event.clientX, event.clientY);
+  }
+
+  private markdownDropPositionAt(editorView: EditorView, clientX: number, clientY: number): number {
     const { doc } = editorView.state;
     if (doc.length === 0) return 0;
 
-    const rawPosition = editorView.posAtCoords({ x: event.clientX, y: event.clientY }) ?? doc.length;
+    const rawPosition = editorView.posAtCoords({ x: clientX, y: clientY }) ?? doc.length;
     const positions = collectMarkdownDropBoundaryPositions(
       doc.length,
       buildHandleRanges(editorView.state),
@@ -389,7 +1014,7 @@ export class DragSessionManager extends Component implements DragStarter {
       const rect = this.markdownDropLineRect(editorView, position);
       return rect ? [{ position, top: rect.top }] : [];
     });
-    return chooseMarkdownDropPosition(rawPosition, event.clientY, boundaries) ?? rawPosition;
+    return chooseMarkdownDropPosition(rawPosition, clientY, boundaries) ?? rawPosition;
   }
 
   private resolvePointerAction(
@@ -430,12 +1055,15 @@ export class DragSessionManager extends Component implements DragStarter {
         this.handleCanvasPenPointerDown(event);
       }, true);
       component.registerDomEvent(ownerWindow, "pointermove", (event) => {
+        this.handleSelectionPointerMove(event);
         this.handleCanvasPenPointerMove(event);
       }, true);
       component.registerDomEvent(ownerWindow, "pointerup", (event) => {
+        this.finishSelectionPointer(event.pointerId);
         this.handleCanvasPenPointerUp(event);
       }, true);
       component.registerDomEvent(ownerWindow, "pointercancel", (event) => {
+        this.finishSelectionPointer(event.pointerId);
         this.handleCanvasPenPointerCancel(event);
       }, true);
       component.registerDomEvent(ownerWindow, "mousedown", (event) => {
@@ -452,7 +1080,10 @@ export class DragSessionManager extends Component implements DragStarter {
       }, true);
     }
     component.registerDomEvent(document, "keydown", (event) => {
-      if (event.key === "Escape" && (this.session || this.pointerDrag || this.canvasPenDrag)) {
+      if (event.key !== "Escape") return;
+      this.clearBlockSelectionsInDocument(document);
+      this.cancelSelectionPointer();
+      if (this.session || this.pointerDrag || this.canvasPenDrag) {
         this.cleanupDrag();
       }
     }, true);
@@ -460,6 +1091,10 @@ export class DragSessionManager extends Component implements DragStarter {
   }
 
   private unregisterDocument(document: Document): void {
+    this.clearBlockSelectionsInDocument(document);
+    if (this.selectionPointer?.view.dom.ownerDocument === document) {
+      this.cancelSelectionPointer();
+    }
     const component = this.documentComponents.get(document);
     if (!component) return;
     component.unload();
@@ -770,6 +1405,7 @@ export class DragSessionManager extends Component implements DragStarter {
       this.moveGhost(event);
     }
     if (this.canvasAdapter.findDropTarget(event)) {
+      this.stopAutoScroll();
       this.clearMarkdownDropTarget();
       event.preventDefault();
       event.stopPropagation();
@@ -778,19 +1414,46 @@ export class DragSessionManager extends Component implements DragStarter {
     }
 
     const markdownTarget = this.findMarkdownDropTarget(event);
-    if (!markdownTarget) {
+    if (markdownTarget) {
+      event.preventDefault();
+      event.stopPropagation();
+      const action = resolveMarkdownDropAction(event, this.host.config.markdownBindings);
+      this.markdownDropAction = action;
+      this.markdownDropDocument = markdownTarget.ownerDocument;
+      if (action === "none") {
+        this.hideMarkdownDropLine();
+      } else {
+        this.showMarkdownDropLine(markdownTarget);
+      }
+      if (event.dataTransfer) {
+        event.dataTransfer.dropEffect =
+          action === "move" && markdownTarget.issue !== null
+            ? "none"
+            : action === "move"
+              ? "move"
+              : action === "none"
+                ? "none"
+                : "copy";
+      }
+      this.updateAutoScroll(markdownTarget, event.clientX, event.clientY, action);
+      return;
+    }
+
+    const fileTarget = this.findMarkdownFileDropTarget(event);
+    if (!fileTarget) {
       this.clearMarkdownDropTarget();
       return;
     }
     event.preventDefault();
     event.stopPropagation();
+    this.stopAutoScroll();
+    this.hideMarkdownDropLine();
     const action = resolveMarkdownDropAction(event, this.host.config.markdownBindings);
     this.markdownDropAction = action;
-    this.markdownDropDocument = markdownTarget.ownerDocument;
-    if (action === "none") this.hideMarkdownDropLine();
-    else this.showMarkdownDropLine(markdownTarget);
+    this.markdownDropDocument = fileTarget.ownerDocument;
     if (event.dataTransfer) {
-      event.dataTransfer.dropEffect = action === "move" ? "move" : action === "none" ? "none" : "copy";
+      event.dataTransfer.dropEffect =
+        action === "move" ? "move" : action === "none" ? "none" : "copy";
     }
   }
 
@@ -814,21 +1477,27 @@ export class DragSessionManager extends Component implements DragStarter {
     }
 
     const markdownTarget = this.findMarkdownDropTarget(event);
-    if (!markdownTarget) {
-      this.cleanupDrag();
+    if (markdownTarget) {
+      event.preventDefault();
+      event.stopPropagation();
+      const action = this.markdownDropDocument === markdownTarget.ownerDocument
+        ? this.markdownDropAction ?? resolveMarkdownDropAction(event, this.host.config.markdownBindings)
+        : resolveMarkdownDropAction(event, this.host.config.markdownBindings);
+      await this.commitMarkdownDrop(session, markdownTarget, action);
       return;
     }
 
+    const fileTarget = this.findMarkdownFileDropTarget(event);
+    if (!fileTarget) {
+      this.cleanupDrag();
+      return;
+    }
     event.preventDefault();
     event.stopPropagation();
-    const action = this.markdownDropDocument === markdownTarget.ownerDocument
+    const action = this.markdownDropDocument === fileTarget.ownerDocument
       ? this.markdownDropAction ?? resolveMarkdownDropAction(event, this.host.config.markdownBindings)
       : resolveMarkdownDropAction(event, this.host.config.markdownBindings);
-    await this.commitMarkdownDrop(
-      session,
-      markdownTarget,
-      action,
-    );
+    await this.commitMarkdownFileDrop(session, fileTarget, action);
   }
 
   private async commitMarkdownDrop(
@@ -836,11 +1505,24 @@ export class DragSessionManager extends Component implements DragStarter {
     target: MarkdownDropTarget,
     action: ReturnType<typeof resolveMarkdownDropAction>,
   ): Promise<void> {
+    if (!this.isMarkdownTargetConnected(target)) return;
+    if (!this.commitGate.tryClaim(session.id, "markdown")) return;
+
     try {
       if (action === "none") return;
-      if (!this.isMarkdownTargetConnected(target)) return;
+      if (action === "move" && target.issue !== null) {
+        new Notice(this.markdownDropIssueMessage(target.issue));
+        return;
+      }
       if (!session.sourceView.state.doc.eq(session.sourceState.doc)) {
         new Notice("The source note changed during the drag. Try again.");
+        return;
+      }
+      if (
+        target.file.path === session.sourceFile.path &&
+        !target.editorView.state.doc.eq(session.sourceState.doc)
+      ) {
+        new Notice("The other pane changed the source note during the drag. Try again.");
         return;
       }
       if (!this.isEditorWritable(target.editorView)) {
@@ -874,6 +1556,127 @@ export class DragSessionManager extends Component implements DragStarter {
     }
   }
 
+  private async commitMarkdownFileDrop(
+    session: DragSession,
+    target: MarkdownFileDropTarget,
+    action: ResolvedMarkdownDropAction,
+  ): Promise<void> {
+    if (!this.commitGate.tryClaim(session.id, "markdown")) return;
+
+    try {
+      if (action === "none") return;
+      if (target.file.path === session.sourceFile.path) {
+        new Notice("The file target is the same as the source note.");
+        return;
+      }
+      if (!session.sourceView.state.doc.eq(session.sourceState.doc)) {
+        new Notice("The source note changed during the drag. Try again.");
+        return;
+      }
+      if (action === "move") {
+        if (!this.isEditorWritable(session.sourceView)) {
+          new Notice("The source note is read-only or not editable.");
+          return;
+        }
+        if (requiresMoveConfirmation(session.units)) {
+          const confirmed = await new MoveConfirmationModal(
+            this.host.app,
+            session.units.filter((unit) => unit.existingBlockId !== undefined).length,
+          ).openAndConfirm();
+          if (!confirmed || !session.sourceView.state.doc.eq(session.sourceState.doc)) return;
+        }
+      }
+
+      const targetBefore = await this.host.app.vault.read(target.file);
+      const sourceBefore = session.sourceState.doc.toString();
+      const planned = action === "embed-source"
+        ? this.planMarkdownReferences(session.sourceState, session.units)
+        : session.units;
+      const sourceLink = this.host.app.metadataCache.fileToLinktext(
+        session.sourceFile,
+        target.file.path,
+        true,
+      );
+      const targetBlocks = planned.map((unit) =>
+        action === "move"
+          ? unit.text
+          : directBlockEmbed(unit.text) ?? `![[${sourceLink}${sourceSubpath(unit)}]]`,
+      );
+      const targetAfter = insertBlocksAtBoundary(targetBefore, targetBefore.length, targetBlocks);
+      const sourceAfter = action === "move"
+        ? removeTextRanges(sourceBefore, session.units)
+        : applyTextChanges(sourceBefore, this.blockIdChanges(planned));
+
+      if (action === "embed-source" && planned.some((unit) => unit.blockIdInsert !== undefined) && !this.isEditorWritable(session.sourceView)) {
+        new Notice("The source note is read-only and needs a block ID before it can be embedded.");
+        return;
+      }
+
+      const sourceMutation: MarkdownMutation = {
+        path: session.sourceFile.path,
+        before: sourceBefore,
+        after: sourceAfter,
+      };
+      const targetMutation: MarkdownMutation = {
+        path: target.file.path,
+        before: targetBefore,
+        after: targetAfter,
+      };
+      const transaction = await runMarkdownTransaction(
+        [sourceMutation, targetMutation],
+        {
+          apply: async (mutation) => {
+            if (mutation.path === session.sourceFile.path) {
+              if (!session.sourceView.state.doc.eq(session.sourceState.doc) || session.sourceView.state.doc.toString() !== mutation.before) {
+                throw new Error("The source note changed during the Markdown drop.");
+              }
+              session.sourceView.dispatch({
+                changes: { from: 0, to: session.sourceView.state.doc.length, insert: mutation.after },
+              });
+              return;
+            }
+            await this.host.app.vault.process(target.file, (current) => {
+              if (current !== mutation.before) {
+                throw new Error("The file target changed during the Markdown drop.");
+              }
+              return mutation.after;
+            });
+          },
+          rollback: async (mutation) => {
+            if (mutation.path === session.sourceFile.path) {
+              if (session.sourceView.state.doc.toString() !== mutation.after) {
+                throw new Error("The source note changed before rollback.");
+              }
+              session.sourceView.dispatch({
+                changes: { from: 0, to: session.sourceView.state.doc.length, insert: mutation.before },
+              });
+              return;
+            }
+            await this.host.app.vault.process(target.file, (current) => {
+              if (current !== mutation.after) {
+                throw new Error("The file target changed before rollback.");
+              }
+              return mutation.before;
+            });
+          },
+        },
+      );
+      if (!transaction.ok) {
+        if (transaction.rollbackFailed) {
+          new Notice("The Markdown drop failed and could not fully roll back. Reload the affected notes.");
+        }
+        throw transaction.error instanceof Error
+          ? transaction.error
+          : new Error("The Markdown drop transaction failed.");
+      }
+    } catch (error) {
+      console.error("DragDrop could not complete a file-target Markdown drop.", error);
+      new Notice("Could not complete the file-target Markdown drop. No content was moved.");
+    } finally {
+      this.cleanupDrag();
+    }
+  }
+
   private isMarkdownTargetConnected(target: MarkdownDropTarget): boolean {
     return (
       target.view.containerEl.isConnected &&
@@ -895,11 +1698,20 @@ export class DragSessionManager extends Component implements DragStarter {
     session: DragSession,
     target: MarkdownDropTarget,
   ): Promise<void> {
+    const sourceFoldStarts = this.host.config.preserveFoldState
+      ? captureFoldStarts(session.sourceView.state)
+      : [];
+    const targetFoldStarts = this.host.config.preserveFoldState && target.editorView !== session.sourceView
+      ? captureFoldStarts(target.editorView.state)
+      : [];
     const planned = this.planMarkdownReferences(session.sourceState, session.units);
     const sourceContent = session.sourceState.doc.toString();
     const idChanges = this.blockIdChanges(planned);
     const sourceWithIds = applyTextChanges(sourceContent, idChanges);
-    const sameEditor = session.sourceView === target.editorView;
+    const sameDocument =
+      session.sourceView === target.editorView ||
+      (target.file.path === session.sourceFile.path &&
+        target.editorView.state.doc.eq(session.sourceState.doc));
     const targetContent = target.editorView.state.doc.toString();
     const sourceLink = this.host.app.metadataCache.fileToLinktext(
       session.sourceFile,
@@ -912,13 +1724,28 @@ export class DragSessionManager extends Component implements DragStarter {
 
     let sourceAfter = sourceWithIds;
     let targetAfter = insertBlocksAtBoundary(targetContent, target.position, embeds);
-    if (sameEditor) {
+    if (sameDocument) {
       const mappedPosition = mapPositionAfterChanges(target.position, idChanges);
       targetAfter = insertBlocksAtBoundary(sourceWithIds, mappedPosition, embeds);
       sourceAfter = targetAfter;
     }
 
-    this.applyMarkdownDocuments(
+    if (sameDocument && session.sourceView !== target.editorView) {
+      session.sourceView.dispatch({
+        changes: { from: 0, to: session.sourceView.state.doc.length, insert: sourceAfter },
+      });
+      this.restoreEmbeddedFoldState(
+        session.sourceView,
+        sourceFoldStarts,
+        sourceWithIds,
+        idChanges,
+        embeds,
+        target.position,
+      );
+      return;
+    }
+
+    const applied = this.applyMarkdownDocuments(
       session.sourceView,
       target.editorView,
       sourceContent,
@@ -926,29 +1753,96 @@ export class DragSessionManager extends Component implements DragStarter {
       sourceAfter,
       targetAfter,
     );
+    if (!applied || !this.host.config.preserveFoldState) return;
+
+    this.restoreEmbeddedFoldState(
+      session.sourceView,
+      sourceFoldStarts,
+      sourceWithIds,
+      idChanges,
+      sameDocument ? embeds : [],
+      sameDocument ? target.position : Number.POSITIVE_INFINITY,
+    );
+    if (!sameDocument) {
+      restoreFoldStarts(target.editorView, this.mapFoldStartsAfterInsertion(
+        targetFoldStarts,
+        targetContent,
+        target.position,
+        embeds,
+      ));
+    }
   }
 
   private moveMarkdownBlocks(session: DragSession, target: MarkdownDropTarget): void {
+    const sourceFoldStarts = this.host.config.preserveFoldState
+      ? captureFoldStarts(session.sourceView.state)
+      : [];
+    const targetFoldStarts = this.host.config.preserveFoldState && target.editorView !== session.sourceView
+      ? captureFoldStarts(target.editorView.state)
+      : [];
     const sourceContent = session.sourceState.doc.toString();
     const blocks = session.units.map((unit) => ({
       from: unit.from,
       to: unit.to,
       text: unit.text,
     }));
-    const sameEditor = session.sourceView === target.editorView;
+    const sameDocument =
+      session.sourceView === target.editorView ||
+      (target.file.path === session.sourceFile.path &&
+        target.editorView.state.doc.eq(session.sourceState.doc));
     const targetContent = target.editorView.state.doc.toString();
-    const sourceAfter = sameEditor
-      ? planMarkdownMove(sourceContent, blocks, target.position)
-      : removeTextRanges(sourceContent, blocks);
-    const targetAfter = sameEditor
+    const listIntent = this.host.config.structuralMarkdownMoves ? target.listIntent : null;
+    const plannedBlocks = structuredMoveBlocks(blocks, target.targetLineText, listIntent);
+    const sourceAfter = sameDocument
+      ? this.planOrderedListMove(
+          sourceContent,
+          blocks,
+          target.position,
+          target.targetLineText,
+          listIntent,
+        )
+      : this.host.config.renumberOrderedLists
+        ? renumberOrderedListMarkers(removeTextRanges(sourceContent, blocks))
+        : removeTextRanges(sourceContent, blocks);
+    const targetAfter = sameDocument
       ? sourceAfter
-      : insertBlocksAtBoundary(
+      : this.host.config.renumberOrderedLists
+        ? renumberOrderedListMarkers(insertBlocksAtBoundary(
+            targetContent,
+            target.position,
+            blocks.map((block) =>
+              listIntent === null
+                ? block.text
+                : adjustListBlockIndent(block.text, target.targetLineText, listIntent),
+            ),
+          ))
+        : insertBlocksAtBoundary(
           targetContent,
           target.position,
-          blocks.map((block) => block.text),
+          blocks.map((block) =>
+            listIntent === null
+              ? block.text
+              : adjustListBlockIndent(block.text, target.targetLineText, listIntent),
+          ),
         );
 
-    this.applyMarkdownDocuments(
+    if (sameDocument && session.sourceView !== target.editorView) {
+      session.sourceView.dispatch({
+        changes: { from: 0, to: session.sourceView.state.doc.length, insert: sourceAfter },
+      });
+      restoreFoldStarts(
+        session.sourceView,
+        sourceFoldStarts.map((start) => mapPositionAfterMove(
+          sourceContent,
+          plannedBlocks,
+          target.position,
+          start,
+        )),
+      );
+      return;
+    }
+
+    const applied = this.applyMarkdownDocuments(
       session.sourceView,
       target.editorView,
       sourceContent,
@@ -956,6 +1850,70 @@ export class DragSessionManager extends Component implements DragStarter {
       sourceAfter,
       targetAfter,
     );
+    if (!applied || !this.host.config.preserveFoldState) return;
+
+    restoreFoldStarts(
+      session.sourceView,
+      sourceFoldStarts.map((start) => sameDocument
+        ? mapPositionAfterMove(sourceContent, plannedBlocks, target.position, start)
+        : mapPositionAfterRemovals(start, sourceContent, blocks)),
+    );
+    if (!sameDocument) {
+      restoreFoldStarts(
+        target.editorView,
+        targetFoldStarts.map((start) => start >= target.position
+          ? start + (targetAfter.length - targetContent.length)
+          : start),
+      );
+    }
+  }
+
+  private planOrderedListMove(
+    content: string,
+    blocks: readonly { from: number; to: number; text: string }[],
+    targetPosition: number,
+    targetLineText: string,
+    listIntent: ListDropIntent | null,
+  ): string {
+    const moved = planStructuredMarkdownMove(
+      content,
+      blocks,
+      targetPosition,
+      targetLineText,
+      listIntent,
+    );
+    return this.host.config.renumberOrderedLists
+      ? renumberOrderedListMarkers(moved)
+      : moved;
+  }
+
+  private restoreEmbeddedFoldState(
+    view: EditorView,
+    starts: readonly number[],
+    sourceContent: string,
+    idChanges: readonly TextChange[],
+    embeds: readonly string[],
+    targetPosition: number,
+  ): void {
+    if (!this.host.config.preserveFoldState || starts.length === 0) return;
+    const mapped = starts.map((start) => {
+      const afterIds = mapPositionAfterChanges(start, idChanges);
+      return Number.isFinite(targetPosition)
+        ? mapPositionAfterInsertion(sourceContent, afterIds, embeds, mapPositionAfterChanges(targetPosition, idChanges))
+        : afterIds;
+    });
+    restoreFoldStarts(view, mapped);
+  }
+
+  private mapFoldStartsAfterInsertion(
+    starts: readonly number[],
+    content: string,
+    position: number,
+    blocks: readonly string[],
+  ): number[] {
+    return starts.map((start) => start >= position
+      ? start + (insertBlocksAtBoundary(content, position, blocks).length - content.length)
+      : start);
   }
 
   private applyMarkdownDocuments(
@@ -1021,13 +1979,33 @@ export class DragSessionManager extends Component implements DragStarter {
       );
   }
 
+  private markdownDropIssueMessage(issue: MarkdownDropIssue): string {
+    switch (issue) {
+      case "inside-source":
+        return "Cannot move a block into its own source range.";
+      case "frontmatter":
+        return "Cannot move a block into frontmatter.";
+      case "table-cell":
+        return "Cannot move a block into a table cell.";
+      case "fenced-code":
+        return "Cannot move a block into a fenced code block.";
+      case "quote-run":
+        return "Cannot move a block into the middle of a quote or callout.";
+      case "horizontal-rule":
+        return "Cannot move a block into a horizontal rule.";
+    }
+  }
+
   private async commitDrop(
     session: DragSession,
     target: CanvasDropTarget,
     action: ReturnType<typeof resolveCanvasDropAction>,
   ): Promise<void> {
+    if (!this.canvasAdapter.isTargetConnected(target)) return;
+    if (!this.commitGate.tryClaim(session.id, "canvas")) return;
+
     try {
-      if (action === "none" || !this.canvasAdapter.isTargetConnected(target)) return;
+      if (action === "none") return;
       if (!session.sourceView.state.doc.eq(session.sourceState.doc)) {
         new Notice("The source note changed during the drag. Try again.");
         return;
@@ -1146,21 +2124,6 @@ export class DragSessionManager extends Component implements DragStarter {
     );
   }
 
-  private sourceRanges(state: EditorState, handle: HandleRange): SourceRange[] {
-    const handles = buildHandleRanges(state);
-    const nonEmptyRanges = state.selection.ranges.filter((range) => !range.empty);
-    const handleIsSelected = nonEmptyRanges.some(
-      (range) => range.from <= handle.to && range.to >= handle.from,
-    );
-    if (nonEmptyRanges.length === 0 || !handleIsSelected) return [handle];
-
-    return state.selection.ranges.map((range) => {
-      if (!range.empty) return { from: range.from, to: range.to };
-      const found = handles.find((candidate) => candidate.from <= range.from && candidate.to >= range.from);
-      return found ?? handle;
-    });
-  }
-
   private findMarkdownFile(view: EditorView): TFile | null {
     let result: TFile | null = null;
     this.host.app.workspace.iterateAllLeaves((leaf: WorkspaceLeaf) => {
@@ -1258,18 +2221,146 @@ export class DragSessionManager extends Component implements DragStarter {
 
   private cleanupDrag(): void {
     this.clearMarkdownDropTarget();
+    this.clearSourceHighlight();
     this.removeGhost();
     this.session = null;
+    this.commitGate.reset();
     this.clearCanvasPenDrag();
     this.canvasPenContextMenuSuppression = null;
-    if (this.pointerDrag) this.releasePointerCapture(this.pointerDrag);
+    if (this.pointerDrag) {
+      this.clearMobileSelectionTimer(this.pointerDrag);
+      this.releasePointerCapture(this.pointerDrag);
+    }
     this.pointerDrag = null;
   }
 
   private clearMarkdownDropTarget(): void {
+    this.stopAutoScroll();
     this.markdownDropAction = null;
     this.markdownDropDocument = null;
     this.hideMarkdownDropLine();
+  }
+
+  private updateAutoScroll(
+    target: MarkdownDropTarget,
+    clientX: number,
+    clientY: number,
+    action: ResolvedMarkdownDropAction,
+  ): void {
+    if (!this.host.config.edgeAutoScroll || action === "none") {
+      this.stopAutoScroll();
+      return;
+    }
+
+    const scrollRect = target.editorView.scrollDOM.getBoundingClientRect();
+    const delta = edgeScrollDelta(
+      { x: clientX, y: clientY },
+      {
+        left: scrollRect.left,
+        top: scrollRect.top,
+        right: scrollRect.right,
+        bottom: scrollRect.bottom,
+      },
+      this.host.config.autoScrollEdgePx,
+      this.host.config.autoScrollMaxSpeed,
+    );
+    if (delta.x === 0 && delta.y === 0) {
+      this.stopAutoScroll();
+      return;
+    }
+
+    this.autoScrollTarget = target;
+    this.autoScrollX = clientX;
+    this.autoScrollY = clientY;
+    if (this.autoScrollFrame !== null) return;
+
+    const ownerWindow = target.ownerDocument.defaultView;
+    if (!ownerWindow) return;
+    this.autoScrollFrame = ownerWindow.requestAnimationFrame(() => {
+      this.autoScrollFrame = null;
+      this.runAutoScroll();
+    });
+  }
+
+  private runAutoScroll(): void {
+    const target = this.autoScrollTarget;
+    if (!target || !this.session || !target.editorView.dom.isConnected) {
+      this.stopAutoScroll();
+      return;
+    }
+
+    const scrollRect = target.editorView.scrollDOM.getBoundingClientRect();
+    const delta = edgeScrollDelta(
+      { x: this.autoScrollX, y: this.autoScrollY },
+      {
+        left: scrollRect.left,
+        top: scrollRect.top,
+        right: scrollRect.right,
+        bottom: scrollRect.bottom,
+      },
+      this.host.config.autoScrollEdgePx,
+      this.host.config.autoScrollMaxSpeed,
+    );
+    if (delta.x === 0 && delta.y === 0) {
+      this.stopAutoScroll();
+      return;
+    }
+
+    target.editorView.scrollDOM.scrollLeft += delta.x;
+    target.editorView.scrollDOM.scrollTop += delta.y;
+    this.refreshMarkdownDropTarget(target, this.autoScrollX, this.autoScrollY);
+    const action = this.markdownDropAction;
+    if (action === null) {
+      this.stopAutoScroll();
+      return;
+    }
+    if (action === "none") {
+      this.hideMarkdownDropLine();
+    } else {
+      this.showMarkdownDropLine(target);
+    }
+
+    this.autoScrollFrame = target.ownerDocument.defaultView?.requestAnimationFrame(() => {
+      this.autoScrollFrame = null;
+      this.runAutoScroll();
+    }) ?? null;
+  }
+
+  private refreshMarkdownDropTarget(
+    target: MarkdownDropTarget,
+    clientX: number,
+    clientY: number,
+  ): void {
+    const position = this.markdownDropPositionAt(target.editorView, clientX, clientY);
+    const rawPosition = target.editorView.posAtCoords({ x: clientX, y: clientY }) ?? position;
+    const targetLine = target.editorView.state.doc.lineAt(rawPosition);
+    const sourceText = this.session?.units[0]?.text ?? "";
+    const listIntent = resolveListDropIntent({
+      sourceText,
+      targetLineText: targetLine.text,
+      pointerColumn: rawPosition - targetLine.from,
+      contextLineNumber: targetLine.number,
+    });
+    target.position = position;
+    target.targetLineNumber = targetLine.number;
+    target.targetLineText = targetLine.text;
+    target.listIntent = listIntent;
+    target.issue = findMoveTargetIssue(
+      target.editorView.state.doc.toString(),
+      this.session?.sourceFile.path === target.file.path ? this.session.units : [],
+      position,
+    );
+  }
+
+  private stopAutoScroll(): void {
+    if (this.autoScrollFrame !== null) {
+      const ownerWindow = this.autoScrollTarget?.ownerDocument.defaultView;
+      ownerWindow?.cancelAnimationFrame(this.autoScrollFrame);
+    }
+    this.autoScrollFrame = null;
+    this.autoScrollTarget = null;
+    this.autoScrollX = 0;
+    this.autoScrollY = 0;
   }
 
   private showMarkdownDropLine(target: MarkdownDropTarget): void {
@@ -1298,12 +2389,77 @@ export class DragSessionManager extends Component implements DragStarter {
       return;
     }
     this.markdownDropLine.style.width = `${width}px`;
+    this.markdownDropLine.classList.toggle(
+      "dragdrop-markdown-drop-line-child",
+      target.listIntent?.mode === "child",
+    );
+    this.markdownDropLine.classList.toggle(
+      "dragdrop-markdown-drop-line-outdent",
+      target.listIntent?.mode === "outdent",
+    );
+    this.markdownDropLine.classList.toggle(
+      "dragdrop-markdown-drop-line-invalid",
+      target.issue !== null,
+    );
+    this.renderTargetHighlight(target);
     this.markdownDropLine.style.transform = `translate(${contentRect.left}px, ${lineRect.top}px)`;
   }
 
   private hideMarkdownDropLine(): void {
+    this.clearTargetHighlight();
     this.markdownDropLine?.remove();
     this.markdownDropLine = null;
+  }
+
+  private renderSourceHighlight(session: DragSession): void {
+    this.clearSourceHighlight();
+    const view = session.sourceView;
+    for (const unit of session.units) {
+      const firstLine = view.state.doc.lineAt(unit.from).number;
+      const lastLine = view.state.doc.lineAt(Math.min(unit.to, view.state.doc.length)).number;
+      for (let lineNumber = firstLine; lineNumber <= lastLine; lineNumber += 1) {
+        const element = this.editorLineElementAt(view, view.state.doc.line(lineNumber).from);
+        if (!element || this.sourceHighlightElements.includes(element)) continue;
+        element.classList.add("dragdrop-source-highlight");
+        this.sourceHighlightElements.push(element);
+      }
+    }
+  }
+
+  private clearSourceHighlight(): void {
+    for (const element of this.sourceHighlightElements) {
+      element.classList.remove("dragdrop-source-highlight");
+    }
+    this.sourceHighlightElements = [];
+  }
+
+  private renderTargetHighlight(target: MarkdownDropTarget): void {
+    this.clearTargetHighlight();
+    const element = this.editorLineElementAt(target.editorView, target.position);
+    if (!element) return;
+    element.classList.add("dragdrop-target-highlight");
+    if (target.issue !== null) element.classList.add("dragdrop-target-highlight-invalid");
+    if (target.listIntent?.mode === "child") element.classList.add("dragdrop-target-highlight-child");
+    if (target.listIntent?.mode === "outdent") element.classList.add("dragdrop-target-highlight-outdent");
+    this.targetHighlightElements.push(element);
+  }
+
+  private clearTargetHighlight(): void {
+    for (const element of this.targetHighlightElements) {
+      element.classList.remove(
+        "dragdrop-target-highlight",
+        "dragdrop-target-highlight-invalid",
+        "dragdrop-target-highlight-child",
+        "dragdrop-target-highlight-outdent",
+      );
+    }
+    this.targetHighlightElements = [];
+  }
+
+  private editorLineElementAt(view: EditorView, position: number): HTMLElement | null {
+    const node = view.domAtPos(Math.max(0, Math.min(position, view.state.doc.length))).node;
+    const element = isElementNode(node) ? node : node.parentElement;
+    return element?.closest<HTMLElement>(".cm-line") ?? null;
   }
 
   private markdownDropLineRect(

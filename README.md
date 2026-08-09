@@ -2,7 +2,7 @@
 
 Drag Markdown blocks into Obsidian Canvas as source references or generated note cards, into another Markdown note as an embed or move, or turn a Canvas selection into one atomic note.
 
-DragDrop is focused on one workflow: Markdown → Canvas. It does not include search views, Excalidraw integration, note management, or automatic preview panes.
+DragDrop is focused on the Markdown → Canvas and Markdown → Markdown reading workflow. It does not include search views, Excalidraw integration, note management, or automatic preview panes.
 
 ## Usage
 
@@ -25,10 +25,13 @@ When a dragged block is already a standalone embed such as `![[Books/Source#^abc
 
 1. Open a source Markdown note and a destination Markdown note.
 2. Drag a block handle into the destination editor.
-3. With no modifier, DragDrop inserts an embed such as `![[Source note#^block-id]]` and only adds a missing block ID to the source.
+3. With no modifier, DragDrop inserts an embed such as `![[Source note#^block-id]]` and only adds a missing block ID to the source. A dragged block that is already a standalone block embed is copied as that exact embed; multiple selected blocks create multiple embeds.
 4. Hold Ctrl on Windows/Linux or Command on macOS to move the block. Moving a block with an existing ID and moving from a read-only editor are guarded to prevent accidental loss.
+5. Move drops can use sibling, child, and outdent list intent, show a precise insertion line, highlight the source/target, and auto-scroll near the editor edge. These structural behaviors are controlled by settings and apply only to the Move action.
 
-Markdown drops align to a destination block boundary. They do not perform outline indentation, folding, or list restructuring.
+Markdown blocks can also be dropped onto a Markdown file in the file tree or an internal Markdown link to append at the end. Cross-file writes use revision checks and roll back an already-written source when the target changes or fails.
+
+Markdown drops align to a destination block boundary. Structural Move can preserve heading/list folds after the transaction, and optional ordered-list renumbering is disabled by default.
 
 ### Editable block embeds
 
@@ -61,7 +64,7 @@ On a Surface, touch or pen drag starts from the block handle after moving at lea
 
 When **Surface Pen side-button drag** is enabled, pressing the pen's side button on a Markdown handle starts the same captured drag path as a left-button drag and uses the no-modifier Canvas action. On Canvas itself, the plugin translates the pen side-button pointer and mouse sequence into a captured left-button sequence so cards and the Canvas surface receive the same input as a left-button drag. The check is limited to `pen` events with `buttons & 2`, so ordinary desktop right-click behavior is unchanged.
 
-Touch and pen drops support a Canvas in the same Obsidian window. Mouse dragging continues to support Canvas popout windows. **Larger touch handles** is enabled by default and uses 44 x 44 targets only in coarse-pointer environments; disable it to use standard-size handles. Normal editor scrolling and text selection remain unchanged outside the handle.
+Touch and pen drops support a Canvas in the same Obsidian window. Mouse dragging continues to support Canvas popout windows. **Larger touch handles** is enabled by default and uses 44 x 44 targets only in coarse-pointer environments; disable it to use standard-size handles. **Mobile block interactions** is disabled by default; when enabled, a 200 ms long press enters handle-brushing selection mode while a short movement still starts a drag. Normal editor scrolling and text selection remain unchanged outside the handle.
 
 ## Source content and generated notes
 
@@ -138,7 +141,10 @@ The settings tab includes:
 - Drag preview width
 - Canvas actions, each with its assigned modifier (`Link to source block`, `Create note`, or `Do nothing`)
 - Markdown actions, each with its assigned modifier (`Insert source embed`, `Move content`, or `Do nothing`)
+- Structural Markdown moves, desktop multi-block selection, block menus, cross-file file targets, edge auto-scroll, fold preservation, and optional ordered-list renumbering
+- Handle position (left/right) and visibility (hover/focus or always visible)
 - Surface Pen side-button drag
+- Mobile block interactions (disabled by default; long-press selection mode)
 - Canvas selection to atomic note from the floating toolbar or command palette
 - Editable block embeds (disabled by default; requires an Obsidian reload)
 
@@ -154,7 +160,7 @@ Canvas and Markdown actions use separate modifier mappings. Choose a modifier fr
 - Editable block embeds use the private Markdown embed registry and native widget editor. If the private API is unavailable, the original embed renderer remains in place.
 - Surface Pen side-button drag uses Pointer Events and `setPointerCapture()` on Markdown handles and Canvas elements in the current Obsidian window. Disable it in settings if the pen side button should keep its normal context-menu behavior.
 - The manifest currently declares Obsidian 1.5.11 as the minimum version. Development uses the Obsidian 1.13.1 type surface; verify older desktop versions before relying on them.
-- Markdown → Markdown dragging is supported only between Markdown editors; it does not restructure list indentation or outline hierarchy.
+- Markdown → Markdown supports precise editor boundaries, list-aware Move intent, file-tree/internal-link append targets, and guarded cross-file rollback. File targets append at EOF rather than selecting an interior line.
 - Canvas height fitting is best effort. If measurement fails, the configured initial height is kept.
 
 ## Data changes

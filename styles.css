@@ -44,10 +44,32 @@
   transition: opacity 80ms ease-in-out, color 80ms ease-in-out;
 }
 
+.markdown-source-view.mod-cm6 .dragdrop-handle-icon {
+  inset-inline-start: var(--size-4-1);
+  inset-inline-end: auto;
+}
+
+.dragdrop-handles-right .markdown-source-view.mod-cm6 .dragdrop-handle-icon {
+  inset-inline-start: auto;
+  inset-inline-end: var(--size-4-1);
+}
+
+.dragdrop-handles-always-visible .markdown-source-view.mod-cm6 .dragdrop-handle-icon {
+  opacity: 1;
+}
+
 .markdown-source-view.mod-cm6 .dragdrop-gutter .dragdrop-handle-icon {
   position: static;
   inset: auto;
   opacity: 0;
+}
+
+.dragdrop-handles-right .markdown-source-view.mod-cm6 .dragdrop-gutter-marker {
+  justify-content: flex-end;
+}
+
+.markdown-source-view.mod-cm6 .dragdrop-gutter-marker {
+  justify-content: flex-start;
 }
 
 .markdown-source-view.mod-cm6 .cm-line:hover > .dragdrop-handle .dragdrop-handle-icon,
@@ -56,6 +78,12 @@
 .markdown-source-view.mod-cm6 .dragdrop-handle:hover .dragdrop-handle-icon,
 .markdown-source-view.mod-cm6 .dragdrop-handle:focus-visible .dragdrop-handle-icon {
   opacity: 1;
+}
+
+.markdown-source-view.mod-cm6 .dragdrop-handle-selected .dragdrop-handle-icon {
+  opacity: 1;
+  color: var(--text-accent);
+  background: var(--background-modifier-hover);
 }
 
 @media (pointer: coarse) {
@@ -143,6 +171,15 @@
   opacity: 0;
 }
 
+.dragdrop-clipboard-helper {
+  position: fixed;
+  inset: -10000px auto auto -10000px;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
 .dragdrop-markdown-drop-line {
   position: fixed;
   inset-block-start: 0;
@@ -154,6 +191,40 @@
   border-radius: var(--radius-s);
   transform: translate(0, 0);
   display: block;
+}
+
+.dragdrop-markdown-drop-line-child {
+  background: var(--color-green);
+}
+
+.dragdrop-markdown-drop-line-outdent {
+  background: var(--color-orange);
+}
+
+.dragdrop-markdown-drop-line-invalid {
+  background: var(--text-error);
+  opacity: 0.8;
+}
+
+.markdown-source-view.mod-cm6 .cm-line.dragdrop-source-highlight {
+  background: color-mix(in srgb, var(--interactive-accent) 10%, transparent);
+}
+
+.markdown-source-view.mod-cm6 .cm-line.dragdrop-target-highlight {
+  outline: 1px solid color-mix(in srgb, var(--interactive-accent) 55%, transparent);
+  outline-offset: -1px;
+}
+
+.markdown-source-view.mod-cm6 .cm-line.dragdrop-target-highlight-invalid {
+  outline-color: var(--text-error);
+}
+
+.markdown-source-view.mod-cm6 .cm-line.dragdrop-target-highlight-child {
+  box-shadow: inset 3px 0 0 var(--color-green);
+}
+
+.markdown-source-view.mod-cm6 .cm-line.dragdrop-target-highlight-outdent {
+  box-shadow: inset 3px 0 0 var(--color-orange);
 }
 
 .dragdrop-editable-block-embed {

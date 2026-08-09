@@ -4,6 +4,7 @@ import {
   assignModifierToAction,
   DEFAULT_SETTINGS,
   mergeSettings,
+  SETTINGS_SCHEMA_VERSION,
   UNASSIGNED_MODIFIER,
 } from "../src/settings-model";
 
@@ -50,5 +51,48 @@ describe("action-oriented modifier settings", () => {
   it("keeps editable block embeds disabled unless explicitly enabled", () => {
     expect(mergeSettings(undefined).editableBlockEmbeds).toBe(false);
     expect(mergeSettings({ editableBlockEmbeds: true }).editableBlockEmbeds).toBe(true);
+  });
+
+  it("migrates old data to the current schema and removes legacy protection", () => {
+    const merged = mergeSettings({
+      schemaVersion: 0,
+      protectedFolders: ["Capture"],
+      defaultFolder: "Inbox",
+    });
+
+    expect(merged.schemaVersion).toBe(SETTINGS_SCHEMA_VERSION);
+    expect(merged.defaultFolder).toBe("Inbox");
+    expect(Object.hasOwn(merged, "protectedFolders")).toBe(false);
+  });
+
+  it("clamps saved numeric settings without resetting valid user values", () => {
+    const merged = mergeSettings({
+      nodeWidth: -20,
+      initialNodeHeight: 2_000,
+      nodeGap: 12.8,
+      previewWidth: Number.NaN,
+    });
+
+    expect(merged.nodeWidth).toBe(160);
+    expect(merged.initialNodeHeight).toBe(1_200);
+    expect(merged.nodeGap).toBe(12);
+    expect(merged.previewWidth).toBe(DEFAULT_SETTINGS.previewWidth);
+  });
+
+  it("keeps structural move and edge scrolling enabled by default", () => {
+    const merged = mergeSettings(undefined);
+
+    expect(merged.structuralMarkdownMoves).toBe(true);
+    expect(merged.multiBlockSelection).toBe(true);
+    expect(merged.blockTypeMenu).toBe(true);
+    expect(merged.crossFileFileTargets).toBe(true);
+    expect(merged.edgeAutoScroll).toBe(true);
+    expect(merged.autoScrollEdgePx).toBe(60);
+    expect(merged.autoScrollMaxSpeed).toBe(12);
+    expect(merged.preserveFoldState).toBe(true);
+    expect(merged.handlePosition).toBe("right");
+    expect(merged.handleVisibility).toBe("hover");
+    expect(merged.renumberOrderedLists).toBe(false);
+    expect(merged.mobileBlockInteractions).toBe(false);
   });
 });

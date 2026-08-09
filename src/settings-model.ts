@@ -9,18 +9,35 @@ import type {
 } from "./model";
 import { MODIFIER_CHORDS } from "./model";
 
+export const SETTINGS_SCHEMA_VERSION = 1;
+export type HandlePosition = "left" | "right";
+export type HandleVisibility = "hover" | "always";
+
 export interface DragDropSettings {
+  schemaVersion: number;
   defaultFolder: string;
   folderStrategy: FolderStrategy;
   nodeWidth: number;
   initialNodeHeight: number;
   nodeGap: number;
   previewWidth: number;
+  handlePosition: HandlePosition;
+  handleVisibility: HandleVisibility;
   touchDropAction: TouchDropAction;
   surfacePenSideButtonDrag: boolean;
   largeTouchHandles: boolean;
   canvasSummaryButton: boolean;
   editableBlockEmbeds: boolean;
+  structuralMarkdownMoves: boolean;
+  multiBlockSelection: boolean;
+  blockTypeMenu: boolean;
+  crossFileFileTargets: boolean;
+  edgeAutoScroll: boolean;
+  autoScrollEdgePx: number;
+  autoScrollMaxSpeed: number;
+  preserveFoldState: boolean;
+  renumberOrderedLists: boolean;
+  mobileBlockInteractions: boolean;
   splitListItems: boolean;
   listParentDisplay: ListParentDisplay;
   titleFilenameMode: TitleFilenameMode;
@@ -55,17 +72,30 @@ export function assignModifierToAction<T extends CanvasDropAction | MarkdownDrop
 }
 
 export const DEFAULT_SETTINGS: DragDropSettings = {
+  schemaVersion: SETTINGS_SCHEMA_VERSION,
   defaultFolder: "Distill",
   folderStrategy: "fixed",
   nodeWidth: 400,
   initialNodeHeight: 200,
   nodeGap: 40,
   previewWidth: 400,
+  handlePosition: "right",
+  handleVisibility: "hover",
   touchDropAction: "link-source",
   surfacePenSideButtonDrag: true,
   largeTouchHandles: true,
   canvasSummaryButton: true,
   editableBlockEmbeds: false,
+  structuralMarkdownMoves: true,
+  multiBlockSelection: true,
+  blockTypeMenu: true,
+  crossFileFileTargets: true,
+  edgeAutoScroll: true,
+  autoScrollEdgePx: 60,
+  autoScrollMaxSpeed: 12,
+  preserveFoldState: true,
+  renumberOrderedLists: false,
+  mobileBlockInteractions: false,
   splitListItems: true,
   listParentDisplay: "native-subtree",
   titleFilenameMode: "auto",
@@ -91,11 +121,51 @@ export const DEFAULT_SETTINGS: DragDropSettings = {
   },
 };
 
+type LegacySettings = Omit<Partial<DragDropSettings>, "schemaVersion"> & {
+  protectedFolders?: unknown;
+  schemaVersion?: unknown;
+};
+
+function clampSavedInteger(
+  value: unknown,
+  fallback: number,
+  minimum: number,
+  maximum: number,
+): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
+  return Math.min(maximum, Math.max(minimum, Math.trunc(value)));
+}
+
+function migrateSettings(loaded: LegacySettings): Partial<DragDropSettings> {
+  const {
+    protectedFolders,
+    schemaVersion: savedSchemaVersion,
+    ...rest
+  } = loaded;
+
+  const version =
+    typeof savedSchemaVersion === "number" && Number.isFinite(savedSchemaVersion)
+      ? Math.max(0, Math.trunc(savedSchemaVersion))
+      : 0;
+  if (version < SETTINGS_SCHEMA_VERSION && protectedFolders !== undefined) {
+    // These cleanups are intentionally kept in the migration boundary so old
+    // data is normalized once without changing the live action semantics.
+    // The legacy protected-folder field was removed above for every version.
+    return {
+      ...rest,
+      schemaVersion: SETTINGS_SCHEMA_VERSION,
+    };
+  }
+  return {
+    ...rest,
+    schemaVersion: SETTINGS_SCHEMA_VERSION,
+  };
+}
+
 export function mergeSettings(
-  loaded: Partial<DragDropSettings> | null | undefined,
+  loaded: LegacySettings | null | undefined,
 ): DragDropSettings {
-  const loadedSettings = { ...loaded };
-  Reflect.deleteProperty(loadedSettings, "protectedFolders");
+  const loadedSettings = migrateSettings(loaded ?? {});
   const loadedMarkdownBindings = loaded?.markdownBindings as
     | Record<string, unknown>
     | undefined;
@@ -121,6 +191,34 @@ export function mergeSettings(
   return {
     ...DEFAULT_SETTINGS,
     ...loadedSettings,
+    schemaVersion: SETTINGS_SCHEMA_VERSION,
+    nodeWidth: clampSavedInteger(
+      loaded?.nodeWidth,
+      DEFAULT_SETTINGS.nodeWidth,
+      160,
+      1_200,
+    ),
+    initialNodeHeight: clampSavedInteger(
+      loaded?.initialNodeHeight,
+      DEFAULT_SETTINGS.initialNodeHeight,
+      80,
+      1_200,
+    ),
+    nodeGap: clampSavedInteger(loaded?.nodeGap, DEFAULT_SETTINGS.nodeGap, 0, 400),
+    previewWidth: clampSavedInteger(
+      loaded?.previewWidth,
+      DEFAULT_SETTINGS.previewWidth,
+      200,
+      1_000,
+    ),
+    handlePosition:
+      loaded?.handlePosition === "left" || loaded?.handlePosition === "right"
+        ? loaded.handlePosition
+        : DEFAULT_SETTINGS.handlePosition,
+    handleVisibility:
+      loaded?.handleVisibility === "hover" || loaded?.handleVisibility === "always"
+        ? loaded.handleVisibility
+        : DEFAULT_SETTINGS.handleVisibility,
     surfacePenSideButtonDrag:
       typeof loaded?.surfacePenSideButtonDrag === "boolean"
         ? loaded.surfacePenSideButtonDrag
@@ -137,6 +235,50 @@ export function mergeSettings(
       typeof loaded?.editableBlockEmbeds === "boolean"
         ? loaded.editableBlockEmbeds
         : DEFAULT_SETTINGS.editableBlockEmbeds,
+    structuralMarkdownMoves:
+      typeof loaded?.structuralMarkdownMoves === "boolean"
+        ? loaded.structuralMarkdownMoves
+        : DEFAULT_SETTINGS.structuralMarkdownMoves,
+    multiBlockSelection:
+      typeof loaded?.multiBlockSelection === "boolean"
+        ? loaded.multiBlockSelection
+        : DEFAULT_SETTINGS.multiBlockSelection,
+    blockTypeMenu:
+      typeof loaded?.blockTypeMenu === "boolean"
+        ? loaded.blockTypeMenu
+        : DEFAULT_SETTINGS.blockTypeMenu,
+    crossFileFileTargets:
+      typeof loaded?.crossFileFileTargets === "boolean"
+        ? loaded.crossFileFileTargets
+        : DEFAULT_SETTINGS.crossFileFileTargets,
+    edgeAutoScroll:
+      typeof loaded?.edgeAutoScroll === "boolean"
+        ? loaded.edgeAutoScroll
+        : DEFAULT_SETTINGS.edgeAutoScroll,
+    autoScrollEdgePx: clampSavedInteger(
+      loaded?.autoScrollEdgePx,
+      DEFAULT_SETTINGS.autoScrollEdgePx,
+      20,
+      200,
+    ),
+    autoScrollMaxSpeed: clampSavedInteger(
+      loaded?.autoScrollMaxSpeed,
+      DEFAULT_SETTINGS.autoScrollMaxSpeed,
+      1,
+      30,
+    ),
+    preserveFoldState:
+      typeof loaded?.preserveFoldState === "boolean"
+        ? loaded.preserveFoldState
+        : DEFAULT_SETTINGS.preserveFoldState,
+    renumberOrderedLists:
+      typeof loaded?.renumberOrderedLists === "boolean"
+        ? loaded.renumberOrderedLists
+        : DEFAULT_SETTINGS.renumberOrderedLists,
+    mobileBlockInteractions:
+      typeof loaded?.mobileBlockInteractions === "boolean"
+        ? loaded.mobileBlockInteractions
+        : DEFAULT_SETTINGS.mobileBlockInteractions,
     canvasBindings: {
       ...DEFAULT_SETTINGS.canvasBindings,
       ...loaded?.canvasBindings,
