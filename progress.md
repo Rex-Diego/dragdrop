@@ -559,3 +559,11 @@
 | 部署前将标准插件目录误写为源码目录下的 `.obsidian/plugins/dragdrop` | 1 | 未写入；改用已核对的 `..\\..\\plugins\\dragdrop` 绝对目标。 |
 | PowerShell `foreach` 后直接接管道做哈希表格 | 1 | 先收集 `$rows` 再格式化；三方 SHA-256 核对通过。 |
 | Computer Use 无法激活已返回的 Obsidian 主窗口 | 2 | 每次都重新枚举并精确选择 `Topic Keys - canvasread-dev - Obsidian 1.13.7` 后仅重试一次；仍返回 `failed to activate captured window`，停止 UI 输入并保留实机验收。 |
+
+### 0.1.2 提交、推送与 Release
+
+- 发布版本统一升级为 `0.1.2`：`manifest.json`、`package.json`、`package-lock.json` 和 `versions.json` 均已同步；标准插件目录与 `plugins-dev/plugin` 的六个发布文件三方 SHA-256 一致。
+- 最终质量链路通过：`npm.cmd run lint`、`npm.cmd run typecheck`、`npm.cmd run test`（21 files / 117 tests）、`npm.cmd run build`、`node --check main.js`。
+- 已创建并推送发布代码 commit `6790d52`（`Release 0.1.2 selection menu controls`）到 `codex/stage-8-dragger-integration`；GitHub tag `0.1.2` 指向该提交。
+- 已创建正式 GitHub Release `0.1.2`：`https://github.com/Rex-Diego/dragdrop/releases/tag/0.1.2`。核对结果为非 draft、非 prerelease，`main.js`（241,586 bytes）、`manifest.json`（235 bytes）与 `styles.css`（7,156 bytes）全部 uploaded，GitHub SHA-256 digest 与本地一致。
+- 初次远程预检和 push 都因本机 `127.0.0.1` 代理不可达失败。切换为仅对单次命令清除 proxy 环境变量及 Git `http.proxy`/`https.proxy` 覆盖后，直连预检、push、Release 创建和验证均成功；没有修改持久网络设置。

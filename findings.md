@@ -594,3 +594,9 @@
 - `SelectionMenuFeature` 是独立 child `Component`。正值时只在 Markdown 文字选区的 `contextmenu` 事件后，短暂观察同一 owner document 新增的 `.menu`；它不会修改块抓手菜单、Canvas 菜单、设置页或普通未选中文字的右键菜单。
 - 被匹配的菜单获得唯一 `dragdrop-selection-menu` class，以 scoped CSS 应用半透明背景与 blur。计时器由 owner window 创建；pointer/focus 进入取消计时，离开重新完整计时，到期只移除该菜单 DOM 实例。每个 pending/active observer、animation frame、timer 和 child component 都在菜单关闭、window-close 或 plugin unload 时清理。
 - 自动化覆盖 schema 3、`-1/0/正数`、数值 clamp、英文/中文文案和四象限/超界定位。最终 lint、typecheck、21 files / 117 tests、production build、`node --check main.js` 均通过；实机仍需确认 Obsidian 当前版本实际使用的 selection-menu `.menu` DOM。
+
+### 0.1.2 发布（2026-08-16）
+
+- 用户授权后，发布代码以 commit `6790d52` 推送至 `codex/stage-8-dragger-integration`，GitHub tag `0.1.2` 指向该提交，正式 Release 为 `https://github.com/Rex-Diego/dragdrop/releases/tag/0.1.2`。
+- Release 不是 draft 或 prerelease，包含 `main.js`、`manifest.json` 和 `styles.css`。GitHub 返回的 SHA-256 digest 与本地构建资产逐项一致。
+- 默认 Git/gh 网络路径因本地 `127.0.0.1` 代理不可用而失败；仅在单次 Git/GitHub CLI 进程中清除代理变量后直连成功，没有修改系统或全局 Git 代理配置。

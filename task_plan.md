@@ -173,7 +173,7 @@
 - [x] 补纯模型、事件仲裁、CodeMirror adapter、事务 rollback、设置迁移和生命周期测试；移植测试同样履行 MIT 归属
 - [x] 依次通过 `npm.cmd run lint`、`npm.cmd run typecheck`、`npm.cmd run test`、`npm.cmd run build` 和 `node --check main.js`，warnings 必须为 0
 - [x] 更新 README：动作默认值、结构重排、多选、块菜单、跨文件目标、移动端限制、设置迁移、第三方致谢和已知私有 API 风险
-- [x] 每个稳定批次先完成自动化验证，再部署到 `.obsidian/plugins/dragdrop` 与 `plugins-dev/plugin` 并核对 SHA-256；已在用户授权后将已验证构建推送到公开 GitHub 仓库并发布 `0.1.0` BRAT Release
+- [x] 每个稳定批次先完成自动化验证，再部署到 `.obsidian/plugins/dragdrop` 与 `plugins-dev/plugin` 并核对 SHA-256；已在用户授权后将已验证构建推送到公开 GitHub 仓库并发布 `0.1.2` BRAT Release
 - [ ] 分批 Obsidian 实机验收：先 8.1，再 8.2–8.4，最后 8.5–8.6；每批失败先修复，不把未验收功能并入下一批
 - **状态：** in_progress；8.0、8.1、8.2、8.3 已完成，8.4 已完成文件目标/同文件双视图/单源 rollback 首批，8.5 已完成首批视觉与折叠能力；多源事务、完整无障碍/移动端仍待补齐
 
