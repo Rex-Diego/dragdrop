@@ -27,7 +27,7 @@ __export(main_exports, {
   default: () => DragDropPlugin
 });
 module.exports = __toCommonJS(main_exports);
-var import_obsidian10 = require("obsidian");
+var import_obsidian11 = require("obsidian");
 
 // src/drag-handle-extension.ts
 var import_state = require("@codemirror/state");
@@ -4832,11 +4832,287 @@ var EditableBlockEmbedInstance = class {
   }
 };
 
-// src/settings-tab.ts
+// src/selection-menu-feature.ts
 var import_obsidian9 = require("obsidian");
 
+// src/selection-menu-model.ts
+var SELECTION_MENU_GAP = 24;
+var VIEWPORT_PADDING = 8;
+function selectionMenuBehavior(seconds) {
+  if (seconds < 0) return "native";
+  return seconds === 0 ? "hide" : "customize";
+}
+function placeSelectionMenu(selection, menu, viewport) {
+  const horizontalRight = selection.right + SELECTION_MENU_GAP;
+  const horizontalLeft = selection.left - SELECTION_MENU_GAP - menu.width;
+  const verticalBelow = selection.bottom + SELECTION_MENU_GAP;
+  const verticalAbove = selection.top - SELECTION_MENU_GAP - menu.height;
+  const left = horizontalRight + menu.width <= viewport.width - VIEWPORT_PADDING ? horizontalRight : horizontalLeft >= VIEWPORT_PADDING ? horizontalLeft : clamp(horizontalRight, VIEWPORT_PADDING, viewport.width - menu.width - VIEWPORT_PADDING);
+  const top = verticalBelow + menu.height <= viewport.height - VIEWPORT_PADDING ? verticalBelow : verticalAbove >= VIEWPORT_PADDING ? verticalAbove : clamp(verticalBelow, VIEWPORT_PADDING, viewport.height - menu.height - VIEWPORT_PADDING);
+  return { left, top };
+}
+function clamp(value, minimum, maximum) {
+  return Math.max(minimum, Math.min(maximum, value));
+}
+
+// src/selection-menu-feature.ts
+var MENU_SELECTOR = ".menu";
+var MARKDOWN_VIEW_SELECTOR = ".markdown-source-view, .markdown-preview-view";
+var SELECTION_MENU_CLASS = "dragdrop-selection-menu";
+var PENDING_MENU_TIMEOUT_MS = 250;
+function isRecord4(value) {
+  return typeof value === "object" && value !== null;
+}
+function isDocumentLike3(value) {
+  return isRecord4(value) && value.nodeType === 9 && "defaultView" in value && "body" in value;
+}
+function documentFromWindowEvent3(values) {
+  for (const value of values) {
+    if (isDocumentLike3(value)) return value;
+    if (!isRecord4(value)) continue;
+    if (isDocumentLike3(value.doc)) return value.doc;
+    if (isDocumentLike3(value.document)) return value.document;
+  }
+  return null;
+}
+function isNodeLike3(value) {
+  return isRecord4(value) && typeof value.nodeType === "number";
+}
+function elementFromEventTarget2(target) {
+  return isNodeLike3(target) && target.nodeType === 1 ? target : null;
+}
+function elementForNode(node) {
+  if (!node) return null;
+  return node.nodeType === 1 ? node : node.parentElement;
+}
+function selectionRectForTarget(ownerDocument, target) {
+  const markdownView = target.closest(MARKDOWN_VIEW_SELECTOR);
+  if (!markdownView) return null;
+  const selection = ownerDocument.getSelection();
+  if (!selection || selection.rangeCount === 0 || selection.isCollapsed) return null;
+  if (selection.toString().trim().length === 0) return null;
+  const selectionElement = elementForNode(selection.anchorNode);
+  if (!selectionElement || !markdownView.contains(selectionElement)) return null;
+  const rect = selection.getRangeAt(0).getBoundingClientRect();
+  if (!Number.isFinite(rect.left) || !Number.isFinite(rect.top) || !Number.isFinite(rect.right) || !Number.isFinite(rect.bottom) || rect.width <= 0 && rect.height <= 0) {
+    return null;
+  }
+  return {
+    left: rect.left,
+    top: rect.top,
+    right: rect.right,
+    bottom: rect.bottom
+  };
+}
+var SelectionMenuFeature = class extends import_obsidian9.Component {
+  constructor(host) {
+    super();
+    this.host = host;
+  }
+  documentStates = /* @__PURE__ */ new Map();
+  onload() {
+    this.registerDocument(this.host.app.workspace.containerEl.ownerDocument);
+    this.host.app.workspace.onLayoutReady(() => {
+      this.host.app.workspace.iterateAllLeaves((leaf) => {
+        this.registerDocument(leaf.view.containerEl.ownerDocument);
+      });
+    });
+    this.registerEvent(
+      this.host.app.workspace.on("window-open", (...values) => {
+        const ownerDocument = documentFromWindowEvent3(values);
+        if (ownerDocument) this.registerDocument(ownerDocument);
+      })
+    );
+    this.registerEvent(
+      this.host.app.workspace.on("window-close", (...values) => {
+        const ownerDocument = documentFromWindowEvent3(values);
+        if (ownerDocument) this.unregisterDocument(ownerDocument);
+      })
+    );
+  }
+  onunload() {
+    for (const ownerDocument of Array.from(this.documentStates.keys())) {
+      this.unregisterDocument(ownerDocument);
+    }
+  }
+  refresh() {
+    for (const state of this.documentStates.values()) {
+      this.clearPendingMenu(state);
+      if (selectionMenuBehavior(this.host.config.selectionMenuAutoDismissSeconds) !== "customize") {
+        this.clearActiveMenu(state);
+      }
+    }
+  }
+  registerDocument(ownerDocument) {
+    if (this.documentStates.has(ownerDocument)) return;
+    const ownerWindow2 = ownerDocument.defaultView;
+    if (!ownerWindow2) return;
+    const component = new import_obsidian9.Component();
+    const state = {
+      ownerDocument,
+      ownerWindow: ownerWindow2,
+      component,
+      pending: null,
+      pendingObserver: null,
+      pendingTimer: null,
+      active: null
+    };
+    this.documentStates.set(ownerDocument, state);
+    this.addChild(component);
+    component.registerDomEvent(ownerDocument, "contextmenu", (event) => {
+      this.handleContextMenu(state, event);
+    }, true);
+  }
+  unregisterDocument(ownerDocument) {
+    const state = this.documentStates.get(ownerDocument);
+    if (!state) return;
+    this.clearPendingMenu(state);
+    this.clearActiveMenu(state);
+    state.component.unload();
+    this.removeChild(state.component);
+    this.documentStates.delete(ownerDocument);
+  }
+  handleContextMenu(state, event) {
+    if (event.defaultPrevented) return;
+    const target = elementFromEventTarget2(event.target);
+    if (!target) return;
+    const selectionRect = selectionRectForTarget(state.ownerDocument, target);
+    if (!selectionRect) return;
+    const behavior = selectionMenuBehavior(this.host.config.selectionMenuAutoDismissSeconds);
+    if (behavior === "native") return;
+    if (behavior === "hide") {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      this.clearPendingMenu(state);
+      return;
+    }
+    this.clearPendingMenu(state);
+    this.clearActiveMenu(state);
+    const targetRoot = state.ownerDocument.body ?? state.ownerDocument.documentElement;
+    if (!targetRoot) return;
+    state.pending = {
+      knownMenus: new Set(
+        Array.from(state.ownerDocument.querySelectorAll(MENU_SELECTOR))
+      ),
+      selectionRect,
+      dismissSeconds: this.host.config.selectionMenuAutoDismissSeconds
+    };
+    const observer = new state.ownerWindow.MutationObserver(() => {
+      this.activatePendingMenu(state);
+    });
+    state.pendingObserver = observer;
+    observer.observe(targetRoot, { childList: true, subtree: true });
+    state.pendingTimer = state.ownerWindow.setTimeout(() => {
+      this.clearPendingMenu(state);
+    }, PENDING_MENU_TIMEOUT_MS);
+  }
+  activatePendingMenu(state) {
+    const pending = state.pending;
+    if (!pending) return;
+    const menu = Array.from(state.ownerDocument.querySelectorAll(MENU_SELECTOR)).reverse().find((candidate) => !pending.knownMenus.has(candidate));
+    if (!menu) return;
+    this.clearPendingMenu(state);
+    menu.classList.add(SELECTION_MENU_CLASS);
+    const component = new import_obsidian9.Component();
+    let active = null;
+    const observer = new state.ownerWindow.MutationObserver(() => {
+      if (active !== null && !menu.isConnected) this.clearActiveMenu(state, active);
+    });
+    const activeMenu = {
+      menu,
+      component,
+      observer,
+      dismissTimer: null,
+      positionFrame: null,
+      dismissSeconds: pending.dismissSeconds
+    };
+    active = activeMenu;
+    state.active = activeMenu;
+    state.component.addChild(component);
+    const observerRoot = state.ownerDocument.body ?? state.ownerDocument.documentElement;
+    if (!observerRoot) {
+      this.clearActiveMenu(state, activeMenu);
+      return;
+    }
+    activeMenu.observer.observe(observerRoot, {
+      childList: true,
+      subtree: true
+    });
+    component.registerDomEvent(menu, "pointerenter", () => {
+      this.cancelDismissTimer(state, activeMenu);
+    });
+    component.registerDomEvent(menu, "pointerleave", () => {
+      this.scheduleDismissTimer(state, activeMenu);
+    });
+    component.registerDomEvent(menu, "focusin", () => {
+      this.cancelDismissTimer(state, activeMenu);
+    });
+    component.registerDomEvent(menu, "focusout", (event) => {
+      if (isNodeLike3(event.relatedTarget) && menu.contains(event.relatedTarget)) return;
+      this.scheduleDismissTimer(state, activeMenu);
+    });
+    this.positionMenu(state, activeMenu, pending.selectionRect);
+    this.scheduleDismissTimer(state, activeMenu);
+  }
+  positionMenu(state, active, selectionRect) {
+    active.positionFrame = state.ownerWindow.requestAnimationFrame(() => {
+      active.positionFrame = null;
+      if (state.active !== active || !active.menu.isConnected) return;
+      const menuRect = active.menu.getBoundingClientRect();
+      if (menuRect.width <= 0 || menuRect.height <= 0) return;
+      const placement = placeSelectionMenu(
+        selectionRect,
+        { width: menuRect.width, height: menuRect.height },
+        { width: state.ownerWindow.innerWidth, height: state.ownerWindow.innerHeight }
+      );
+      active.menu.style.setProperty("left", `${placement.left}px`);
+      active.menu.style.setProperty("top", `${placement.top}px`);
+    });
+  }
+  scheduleDismissTimer(state, active) {
+    if (state.active !== active || active.dismissSeconds <= 0) return;
+    this.cancelDismissTimer(state, active);
+    active.dismissTimer = state.ownerWindow.setTimeout(() => {
+      if (state.active !== active) return;
+      this.clearActiveMenu(state, active, true);
+    }, active.dismissSeconds * 1e3);
+  }
+  cancelDismissTimer(state, active) {
+    if (active.dismissTimer === null) return;
+    state.ownerWindow.clearTimeout(active.dismissTimer);
+    active.dismissTimer = null;
+  }
+  clearPendingMenu(state) {
+    if (state.pendingTimer !== null) {
+      state.ownerWindow.clearTimeout(state.pendingTimer);
+      state.pendingTimer = null;
+    }
+    state.pendingObserver?.disconnect();
+    state.pendingObserver = null;
+    state.pending = null;
+  }
+  clearActiveMenu(state, expected, removeMenu = false) {
+    const active = state.active;
+    if (!active || expected !== void 0 && active !== expected) return;
+    state.active = null;
+    this.cancelDismissTimer(state, active);
+    if (active.positionFrame !== null) {
+      state.ownerWindow.cancelAnimationFrame(active.positionFrame);
+      active.positionFrame = null;
+    }
+    active.observer.disconnect();
+    active.menu.classList.remove(SELECTION_MENU_CLASS);
+    active.component.unload();
+    state.component.removeChild(active.component);
+    if (removeMenu && active.menu.isConnected) active.menu.remove();
+  }
+};
+
+// src/settings-tab.ts
+var import_obsidian10 = require("obsidian");
+
 // src/settings-model.ts
-var SETTINGS_SCHEMA_VERSION = 2;
+var SETTINGS_SCHEMA_VERSION = 3;
 var UNASSIGNED_MODIFIER = "unassigned";
 function assignedModifierForAction(bindings, action) {
   return MODIFIER_CHORDS.find((chord) => bindings[chord] === action) ?? UNASSIGNED_MODIFIER;
@@ -4876,6 +5152,7 @@ var DEFAULT_SETTINGS = {
   preserveFoldState: true,
   renumberOrderedLists: false,
   mobileBlockInteractions: false,
+  selectionMenuAutoDismissSeconds: 3,
   splitListItems: true,
   listParentDisplay: "native-subtree",
   titleFilenameMode: "auto",
@@ -5010,6 +5287,12 @@ function mergeSettings(loaded) {
     preserveFoldState: typeof loaded?.preserveFoldState === "boolean" ? loaded.preserveFoldState : DEFAULT_SETTINGS.preserveFoldState,
     renumberOrderedLists: typeof loaded?.renumberOrderedLists === "boolean" ? loaded.renumberOrderedLists : DEFAULT_SETTINGS.renumberOrderedLists,
     mobileBlockInteractions: typeof loaded?.mobileBlockInteractions === "boolean" ? loaded.mobileBlockInteractions : DEFAULT_SETTINGS.mobileBlockInteractions,
+    selectionMenuAutoDismissSeconds: clampSavedInteger(
+      loaded?.selectionMenuAutoDismissSeconds,
+      DEFAULT_SETTINGS.selectionMenuAutoDismissSeconds,
+      -1,
+      3600
+    ),
     canvasBindings: {
       ...DEFAULT_SETTINGS.canvasBindings,
       ...loaded?.canvasBindings
@@ -5094,6 +5377,8 @@ var EN_SETTINGS_TEXT = {
   largerTouchHandlesDescription: "Use 44 x 44 touch targets for Markdown handles on touch-oriented devices.",
   mobileInteractionsName: "Mobile block selection",
   mobileInteractionsDescription: "After a 200 ms long press, brush across handles to select blocks. Moving sooner still starts a drag.",
+  selectionMenuTimeoutName: "Text selection menu timeout",
+  selectionMenuTimeoutDescription: "Set -1 to use Obsidian's normal menu, 0 to hide the menu, or a positive number of seconds to close it when it is not hovered.",
   editableEmbedsName: "Edit embedded blocks",
   editableEmbedsDescription: "Edit a Markdown block inside a ![[file#^block-id]] embed and write changes back to the original block. Requires an Obsidian reload.",
   blockMenuName: "Block action menu",
@@ -5186,6 +5471,8 @@ var ZH_SETTINGS_TEXT = {
   largerTouchHandlesDescription: "\u5728\u89E6\u63A7\u8BBE\u5907\u4E0A\u4E3A Markdown \u6293\u624B\u4F7F\u7528 44 \xD7 44 \u7684\u89E6\u63A7\u533A\u57DF\u3002",
   mobileInteractionsName: "\u79FB\u52A8\u7AEF\u591A\u5757\u9009\u62E9",
   mobileInteractionsDescription: "\u957F\u6309 200 \u6BEB\u79D2\u540E\uFF0C\u53EF\u5212\u8FC7\u591A\u4E2A\u6293\u624B\u8FDB\u884C\u9009\u62E9\uFF1B\u5728\u6B64\u4E4B\u524D\u79FB\u52A8\u4ECD\u4F1A\u76F4\u63A5\u5F00\u59CB\u62D6\u62FD\u3002",
+  selectionMenuTimeoutName: "\u6587\u5B57\u9009\u533A\u83DC\u5355\u81EA\u52A8\u6D88\u5931\u79D2\u6570",
+  selectionMenuTimeoutDescription: "\u8BBE\u4E3A -1 \u65F6\u4FDD\u7559 Obsidian \u539F\u6709\u83DC\u5355\uFF1B\u8BBE\u4E3A 0 \u65F6\u4E0D\u663E\u793A\u9009\u533A\u83DC\u5355\uFF1B\u8BBE\u4E3A\u6B63\u6574\u6570\u65F6\uFF0C\u83DC\u5355\u672A\u88AB\u60AC\u505C\u6307\u5B9A\u79D2\u6570\u540E\u81EA\u52A8\u5173\u95ED\u3002",
   editableEmbedsName: "\u7F16\u8F91\u5D4C\u5165\u5757",
   editableEmbedsDescription: "\u76F4\u63A5\u7F16\u8F91 ![[\u6587\u4EF6#^\u5757ID]] \u4E2D\u7684 Markdown \u5757\uFF0C\u5E76\u628A\u4FEE\u6539\u5199\u56DE\u539F\u5757\u3002\u4FEE\u6539\u6B64\u9879\u540E\u9700\u8981\u91CD\u8F7D Obsidian\u3002",
   blockMenuName: "\u5757\u64CD\u4F5C\u83DC\u5355",
@@ -5295,7 +5582,7 @@ function clampInteger(value, minimum, maximum) {
   if (typeof value !== "number" || !Number.isFinite(value)) return void 0;
   return Math.min(maximum, Math.max(minimum, Math.trunc(value)));
 }
-var DragDropSettingTab = class extends import_obsidian9.PluginSettingTab {
+var DragDropSettingTab = class extends import_obsidian10.PluginSettingTab {
   constructor(app, host) {
     super(app, host);
     this.host = host;
@@ -5315,12 +5602,12 @@ var DragDropSettingTab = class extends import_obsidian9.PluginSettingTab {
     containerEl.empty();
     containerEl.addClass("dragdrop-settings");
     for (const group of this.getSettingGroups()) {
-      new import_obsidian9.Setting(containerEl).setName(group.heading).setHeading();
+      new import_obsidian10.Setting(containerEl).setName(group.heading).setHeading();
       for (const definition of group.items) this.addLegacySetting(definition);
     }
   }
   getSettingGroups() {
-    const text = settingsTextForLanguage(import_obsidian9.moment.locale());
+    const text = settingsTextForLanguage(import_obsidian10.moment.locale());
     const modifiers = modifierOptions(text);
     const canvasActionItems = CANVAS_BINDING_ACTIONS.map((action) => ({
       name: `${text.canvasScope}: ${canvasActionLabel(action, text)}`,
@@ -5506,6 +5793,17 @@ var DragDropSettingTab = class extends import_obsidian9.PluginSettingTab {
             name: text.mobileInteractionsName,
             desc: text.mobileInteractionsDescription,
             control: { type: "toggle", key: "mobileBlockInteractions" }
+          },
+          {
+            name: text.selectionMenuTimeoutName,
+            desc: text.selectionMenuTimeoutDescription,
+            control: {
+              type: "number",
+              key: "selectionMenuAutoDismissSeconds",
+              min: -1,
+              max: 3600,
+              step: 1
+            }
           }
         ]
       },
@@ -5575,7 +5873,7 @@ var DragDropSettingTab = class extends import_obsidian9.PluginSettingTab {
     ];
   }
   addLegacySetting(definition) {
-    const setting = new import_obsidian9.Setting(this.containerEl).setName(definition.name);
+    const setting = new import_obsidian10.Setting(this.containerEl).setName(definition.name);
     if (definition.desc !== void 0) setting.setDesc(definition.desc);
     const { control } = definition;
     const currentValue = this.readControlValue(control.key);
@@ -5687,6 +5985,8 @@ var DragDropSettingTab = class extends import_obsidian9.PluginSettingTab {
         return this.host.config.renumberOrderedLists;
       case "mobileBlockInteractions":
         return this.host.config.mobileBlockInteractions;
+      case "selectionMenuAutoDismissSeconds":
+        return this.host.config.selectionMenuAutoDismissSeconds;
       default:
         return void 0;
     }
@@ -5786,7 +6086,7 @@ var DragDropSettingTab = class extends import_obsidian9.PluginSettingTab {
         if (typeof value !== "boolean") return;
         this.host.config.editableBlockEmbeds = value;
         await this.host.saveSettings();
-        new import_obsidian9.Notice(settingsTextForLanguage(import_obsidian9.moment.locale()).reloadEditableEmbedsNotice);
+        new import_obsidian10.Notice(settingsTextForLanguage(import_obsidian10.moment.locale()).reloadEditableEmbedsNotice);
         return;
       case "structuralMarkdownMoves":
         if (typeof value !== "boolean") return;
@@ -5832,6 +6132,12 @@ var DragDropSettingTab = class extends import_obsidian9.PluginSettingTab {
         if (typeof value !== "boolean") return;
         this.host.config.mobileBlockInteractions = value;
         break;
+      case "selectionMenuAutoDismissSeconds": {
+        const normalized = clampInteger(value, -1, 3600);
+        if (normalized === void 0) return;
+        this.host.config.selectionMenuAutoDismissSeconds = normalized;
+        break;
+      }
       default:
         return;
     }
@@ -5843,12 +6149,13 @@ var DragDropSettingTab = class extends import_obsidian9.PluginSettingTab {
 var LARGE_TOUCH_HANDLE_CLASS = "dragdrop-large-touch-handles";
 var HANDLE_RIGHT_CLASS = "dragdrop-handles-right";
 var HANDLE_ALWAYS_VISIBLE_CLASS = "dragdrop-handles-always-visible";
-function isRecord4(value) {
+function isRecord5(value) {
   return typeof value === "object" && value !== null;
 }
-var DragDropPlugin = class extends import_obsidian10.Plugin {
+var DragDropPlugin = class extends import_obsidian11.Plugin {
   config = mergeSettings(DEFAULT_SETTINGS);
   canvasSummaryFeature = null;
+  selectionMenuFeature = null;
   async onload() {
     await this.loadSettings();
     this.applyLargeTouchHandlePreference();
@@ -5864,6 +6171,11 @@ var DragDropPlugin = class extends import_obsidian10.Plugin {
       plugin: this
     });
     this.addChild(this.canvasSummaryFeature);
+    this.selectionMenuFeature = new SelectionMenuFeature({
+      app: this.app,
+      config: this.config
+    });
+    this.addChild(this.selectionMenuFeature);
     if (this.config.editableBlockEmbeds) {
       this.addChild(new EditableBlockEmbedFeature({ app: this.app }));
     }
@@ -5874,6 +6186,7 @@ var DragDropPlugin = class extends import_obsidian10.Plugin {
     await this.saveData(this.config);
     this.applyLargeTouchHandlePreference();
     this.canvasSummaryFeature?.refresh();
+    this.selectionMenuFeature?.refresh();
   }
   applyLargeTouchHandlePreference() {
     const documents = /* @__PURE__ */ new Set();
@@ -5892,6 +6205,6 @@ var DragDropPlugin = class extends import_obsidian10.Plugin {
   }
   async loadSettings() {
     const loaded = await this.loadData();
-    this.config = mergeSettings(isRecord4(loaded) ? loaded : void 0);
+    this.config = mergeSettings(isRecord5(loaded) ? loaded : void 0);
   }
 };

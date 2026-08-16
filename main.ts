@@ -3,6 +3,7 @@ import { createDragHandleExtension } from "./src/drag-handle-extension";
 import { DragSessionManager } from "./src/drag-session-manager";
 import { CanvasSummaryFeature } from "./src/canvas-summary";
 import { EditableBlockEmbedFeature } from "./src/editable-block-embed";
+import { SelectionMenuFeature } from "./src/selection-menu-feature";
 import { DragDropSettingTab } from "./src/settings-tab";
 import { DEFAULT_SETTINGS, mergeSettings, type DragDropSettings } from "./src/settings-model";
 
@@ -17,6 +18,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 export default class DragDropPlugin extends Plugin {
   config: DragDropSettings = mergeSettings(DEFAULT_SETTINGS);
   private canvasSummaryFeature: CanvasSummaryFeature | null = null;
+  private selectionMenuFeature: SelectionMenuFeature | null = null;
 
   async onload(): Promise<void> {
     await this.loadSettings();
@@ -34,6 +36,11 @@ export default class DragDropPlugin extends Plugin {
       plugin: this,
     });
     this.addChild(this.canvasSummaryFeature);
+    this.selectionMenuFeature = new SelectionMenuFeature({
+      app: this.app,
+      config: this.config,
+    });
+    this.addChild(this.selectionMenuFeature);
     if (this.config.editableBlockEmbeds) {
       this.addChild(new EditableBlockEmbedFeature({ app: this.app }));
     }
@@ -45,6 +52,7 @@ export default class DragDropPlugin extends Plugin {
     await this.saveData(this.config);
     this.applyLargeTouchHandlePreference();
     this.canvasSummaryFeature?.refresh();
+    this.selectionMenuFeature?.refresh();
   }
 
   private applyLargeTouchHandlePreference(): void {

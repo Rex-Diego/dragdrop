@@ -534,3 +534,28 @@
 | 最终残留扫描中 `rg` 无匹配返回 1，使并行 wrapper 退出 | 1 | 显式将“无匹配”作为成功结果重新核对 |
 | PowerShell 窗口枚举的 `foreach` 后直接管道产生 empty pipe ParserError | 1 | 先收集 `$rows` 再输出，窗口信息核对完成 |
 | Obsidian 后台重载无法获得前台焦点 | 1 | 确认前台为 `LockApp` 后停止；不绕过锁屏、不重启用户应用，保留实机项待解锁后完成 |
+
+## 会话：2026-08-16（文字选区菜单收口开始）
+
+- 用户确认继续执行。按 `AGENTS.md` 重新读取 `task_plan.md`、`findings.md`、`progress.md`、`planning-with-files-zh` 和仓库内 Obsidian 插件开发技能；本批按需要读取生命周期、CSS、UI/UX、无障碍与类型安全规范。
+- 当前 `HEAD` 为 `d85dc10`（`Release 0.1.1 drag-and-drop refinements`），工作树干净；本轮开始前未修改业务源码。
+- 新需求已纳入阶段 8.7：Surface 文字选区右键菜单采用独立的秒数设定，`-1` 保留原生、`0` 不显示、正整数显示半透明并避让选区的菜单，未 hover 时自动关闭；不改变块抓手的 Copy/Cut/Delete 菜单。
+- 下一步：审查设置模型、插件入口和 Obsidian 菜单挂接边界，先建立纯函数与生命周期测试，再接入运行时 feature。
+
+### 本轮实施结果
+
+- `settings-model.ts` schema 升至 3，新增默认 `3` 秒的 `selectionMenuAutoDismissSeconds`，保存时整数化并限制到 `-1..3600`；`settings-tab.ts` 在“移动端与手写笔”分组新增数字输入，`settings-i18n.ts` 提供完整英文与简体中文说明。
+- 新增 `selection-menu-model.ts` 与 `selection-menu-feature.ts`。`-1` 完全保留原生行为，`0` 在 Markdown 非空文字选区上阻止菜单，正整数只适配本次新增的 `.menu`：半透明、避让选区、未 hover 时自动关闭，hover/focus 时暂停并在离开后重新计时。
+- Feature 按 owner document 注册并支持 workspace window-open/window-close；pending observer、active observer、owner-window timer、animation frame 和 child component 都有清理路径。`main.ts` 已作为插件 child 接入，设置保存时会刷新正在等待的状态。
+- 新增 1 个纯模型测试文件，并扩展设置/本地化测试。最终 `npm.cmd run lint`、`npm.cmd run typecheck`、`npm.cmd run test`（21 files / 117 tests）、`npm.cmd run build`、`node --check main.js` 全部通过。
+- 已将 `manifest.json`、`main.js`、`styles.css`、`README.md`、`LICENSE`、`versions.json` 同步到 `C:\Users\rex18\project\canvasread-dev\.obsidian\plugins\dragdrop` 与 `C:\Users\rex18\project\canvasread-dev\.obsidian\plugins-dev\plugin`；六个文件三方 SHA-256 均一致，标准插件目录的 `data.json` 与另一目录的 `graph-worker.js` 未被覆盖。
+- 待实机验收：Surface 选中文字后的 `-1/0/正数` 菜单语义、半透明/避让、hover 暂停、离开重计时以及 Popout 关闭清理。未把 Node 自动化通过误记为 Obsidian UI 验收。
+
+### 本轮错误记录
+
+| 错误 | 尝试次数 | 解决方案 |
+|------|---------|---------|
+| `NodeList` 不是当前 TS lib 的 Iterable，`Window` 未公开 owner-realm `MutationObserver` | 1 | 改用 `Array.from`，并按既有可编辑嵌入模式声明 owner window 能力类型；typecheck 通过。 |
+| 部署前将标准插件目录误写为源码目录下的 `.obsidian/plugins/dragdrop` | 1 | 未写入；改用已核对的 `..\\..\\plugins\\dragdrop` 绝对目标。 |
+| PowerShell `foreach` 后直接接管道做哈希表格 | 1 | 先收集 `$rows` 再格式化；三方 SHA-256 核对通过。 |
+| Computer Use 无法激活已返回的 Obsidian 主窗口 | 2 | 每次都重新枚举并精确选择 `Topic Keys - canvasread-dev - Obsidian 1.13.7` 后仅重试一次；仍返回 `failed to activate captured window`，停止 UI 输入并保留实机验收。 |

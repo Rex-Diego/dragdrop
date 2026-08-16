@@ -9,7 +9,7 @@ import type {
 } from "./model";
 import { MODIFIER_CHORDS } from "./model";
 
-export const SETTINGS_SCHEMA_VERSION = 2;
+export const SETTINGS_SCHEMA_VERSION = 3;
 export type HandlePosition = "left" | "right";
 export type HandleVisibility = "hover" | "always";
 
@@ -38,6 +38,7 @@ export interface DragDropSettings {
   preserveFoldState: boolean;
   renumberOrderedLists: boolean;
   mobileBlockInteractions: boolean;
+  selectionMenuAutoDismissSeconds: number;
   splitListItems: boolean;
   listParentDisplay: ListParentDisplay;
   titleFilenameMode: TitleFilenameMode;
@@ -97,6 +98,7 @@ export const DEFAULT_SETTINGS: DragDropSettings = {
   preserveFoldState: true,
   renumberOrderedLists: false,
   mobileBlockInteractions: false,
+  selectionMenuAutoDismissSeconds: 3,
   splitListItems: true,
   listParentDisplay: "native-subtree",
   titleFilenameMode: "auto",
@@ -306,6 +308,12 @@ export function mergeSettings(
       typeof loaded?.mobileBlockInteractions === "boolean"
         ? loaded.mobileBlockInteractions
         : DEFAULT_SETTINGS.mobileBlockInteractions,
+    selectionMenuAutoDismissSeconds: clampSavedInteger(
+      loaded?.selectionMenuAutoDismissSeconds,
+      DEFAULT_SETTINGS.selectionMenuAutoDismissSeconds,
+      -1,
+      3_600,
+    ),
     canvasBindings: {
       ...DEFAULT_SETTINGS.canvasBindings,
       ...loaded?.canvasBindings,

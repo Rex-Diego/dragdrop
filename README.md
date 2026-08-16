@@ -68,6 +68,10 @@ When **Surface Pen side-button drag** is enabled, pressing the pen's side button
 
 Touch and pen drops support a Canvas in the same Obsidian window. Mouse dragging continues to support Canvas popout windows. **Larger touch handles** is enabled by default and uses 44 x 44 targets only in coarse-pointer environments; disable it to use standard-size handles. **Mobile block interactions** is disabled by default; when enabled, a 200 ms long press enters handle-brushing selection mode while a short movement still starts a drag. Normal editor scrolling and text selection remain unchanged outside the handle.
 
+### Text selection menu
+
+**Text selection menu timeout** controls the right-click menu shown after selecting text in a Markdown view. Set it to `-1` to leave Obsidian's normal menu unchanged, `0` to hide that menu, or a positive number to show a semi-transparent menu away from the selection and close it after that many seconds. Hovering the menu pauses its timer; leaving it starts a fresh timer. This setting does not affect the Copy, Cut, and Delete menu on block handles.
+
 ## Source content and generated notes
 
 For Canvas references and Markdown embeds, DragDrop keeps the Markdown source as the single content source:
@@ -148,6 +152,7 @@ The settings tab includes:
 - Handle position (left/right) and visibility (hover/focus or always visible)
 - Surface Pen side-button drag
 - Mobile block interactions (disabled by default; long-press selection mode)
+- Text selection menu timeout (`-1` keeps the normal menu, `0` hides it, and a positive value closes it after that many unhovered seconds)
 - Canvas selection to atomic note from the floating toolbar or command palette
 - Editable block embeds (disabled by default; requires an Obsidian reload)
 

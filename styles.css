@@ -181,6 +181,11 @@
   pointer-events: none;
 }
 
+.menu.dragdrop-selection-menu {
+  background-color: color-mix(in srgb, var(--background-primary) 84%, transparent);
+  backdrop-filter: blur(var(--size-4-1));
+}
+
 .dragdrop-markdown-drop-line {
   position: fixed;
   inset-block-start: 0;

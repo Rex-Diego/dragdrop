@@ -60,7 +60,8 @@ type ScalarSettingKey =
   | "autoScrollMaxSpeed"
   | "preserveFoldState"
   | "renumberOrderedLists"
-  | "mobileBlockInteractions";
+  | "mobileBlockInteractions"
+  | "selectionMenuAutoDismissSeconds";
 
 type CanvasBindingAction = Exclude<CanvasDropAction, "inherit">;
 type MarkdownBindingAction = Exclude<MarkdownDropAction, "inherit">;
@@ -404,6 +405,17 @@ export class DragDropSettingTab extends PluginSettingTab {
             desc: text.mobileInteractionsDescription,
             control: { type: "toggle", key: "mobileBlockInteractions" },
           },
+          {
+            name: text.selectionMenuTimeoutName,
+            desc: text.selectionMenuTimeoutDescription,
+            control: {
+              type: "number",
+              key: "selectionMenuAutoDismissSeconds",
+              min: -1,
+              max: 3_600,
+              step: 1,
+            },
+          },
         ],
       },
       {
@@ -601,6 +613,8 @@ export class DragDropSettingTab extends PluginSettingTab {
         return this.host.config.renumberOrderedLists;
       case "mobileBlockInteractions":
         return this.host.config.mobileBlockInteractions;
+      case "selectionMenuAutoDismissSeconds":
+        return this.host.config.selectionMenuAutoDismissSeconds;
       default:
         return undefined;
     }
@@ -750,6 +764,12 @@ export class DragDropSettingTab extends PluginSettingTab {
         if (typeof value !== "boolean") return;
         this.host.config.mobileBlockInteractions = value;
         break;
+      case "selectionMenuAutoDismissSeconds": {
+        const normalized = clampInteger(value, -1, 3_600);
+        if (normalized === undefined) return;
+        this.host.config.selectionMenuAutoDismissSeconds = normalized;
+        break;
+      }
       default:
         return;
     }

@@ -579,3 +579,18 @@
 - 用户最终明确只借鉴 obsidian-dragger 的拖拽能力，不需要右键 Convert。所有转换菜单、planner 和测试均已删除；原生块菜单只保留 Copy/Cut/Delete。内部 `blockTypeMenu` 字段仅作为已有 `data.json` 的 schema 兼容键，用户可见名称改为 `Block action menu` / `块操作菜单`。
 - 最终质量基线为 ESLint 0 warning、TypeScript 通过、20 个测试文件 / 112 个用例通过、production build 与 `node --check main.js` 通过。六个发布文件在源码、`.obsidian/plugins/dragdrop` 和 `plugins-dev/plugin` 三处 SHA-256 一致；`data.json` 与 `graph-worker.js` 未被覆盖。
 - 最终实机重载时 Windows 会话处于锁屏状态，前台进程明确为 `LockApp`。未尝试解锁、重启 Obsidian 或关闭用户工作区；当前旧窗口标题仍是中间诊断 bundle 的遗留状态，不能据此判断最终 bundle 仍含诊断代码，解锁后需重载主工作区再做最终视觉与交互验收。
+
+### 文字选区菜单收口决策（2026-08-16）
+
+- Surface 文字选区的长右键菜单与块抓手右键的 Copy/Cut/Delete 菜单是两条独立交互，不能复用 `blockTypeMenu` / `Block action menu` 设置。
+- 新增单一数值设定 `selectionMenuAutoDismissSeconds`：`-1` 完全不接管，保留 Obsidian 原生行为；`0` 阻止本次有非空文字选区的菜单显示；正整数显示菜单，并在鼠标未悬停该菜单时于指定秒数后关闭。悬停取消计时，离开后重新完整计时。
+- 只处理 Markdown 编辑器中的非空文字选区，在每个 owner document 的捕获阶段监听 `contextmenu`；不处理手柄、Canvas、设置页或其他插件的菜单。主窗口与 Popout 各自登记，所有 listener、MutationObserver 和 timer 由所属 `Component` 生命周期清理。
+- 正值模式只标记本次由选区触发的 Obsidian 菜单，使用作用域化 class 调整半透明显示；定位以 Selection range 的 viewport rect 和 owner window 尺寸计算，优先避开选区下方/右侧，空间不足时回退上方/左侧。关闭仅关闭已标记的这一实例，绝不影响其他菜单。
+- 设置模型 schema 从 2 升到 3；保存时取整并 clamp 到 `-1..3600`，默认 3 秒。设置页使用明确中文/英文说明，不使用 Toggle。
+
+### 文字选区菜单实施结果（2026-08-16）
+
+- 新增纯 `selection-menu-model.ts`：把秒数解析为 native/hide/customize 三种状态，并按 24px 间隔计算选区右下、左下、右上或左上避让位置，最后 clamp 到 owner window viewport。
+- `SelectionMenuFeature` 是独立 child `Component`。正值时只在 Markdown 文字选区的 `contextmenu` 事件后，短暂观察同一 owner document 新增的 `.menu`；它不会修改块抓手菜单、Canvas 菜单、设置页或普通未选中文字的右键菜单。
+- 被匹配的菜单获得唯一 `dragdrop-selection-menu` class，以 scoped CSS 应用半透明背景与 blur。计时器由 owner window 创建；pointer/focus 进入取消计时，离开重新完整计时，到期只移除该菜单 DOM 实例。每个 pending/active observer、animation frame、timer 和 child component 都在菜单关闭、window-close 或 plugin unload 时清理。
+- 自动化覆盖 schema 3、`-1/0/正数`、数值 clamp、英文/中文文案和四象限/超界定位。最终 lint、typecheck、21 files / 117 tests、production build、`node --check main.js` 均通过；实机仍需确认 Obsidian 当前版本实际使用的 selection-menu `.menu` DOM。
