@@ -644,3 +644,8 @@
 - Surface Pen 笔尖默认平移的全局桥接不能覆盖 Canvas 连接点和已有连线；否则连接点会被误转成中键平移，边箭头也无法收到原生操作事件。
 - 保护逻辑同时使用事件目标选择器和按坐标的可见几何命中。几何检查不包含全屏 `.canvas-edges` SVG 容器，只包含 `.canvas-node-connection-point`、边/交互路径和路径标签，从而保留普通区域的中键平移。
 - 侧键选择映射保持不变；连接点/连线在有无侧键时都优先保留给 Obsidian 原生 Canvas 控件。
+
+### 0.1.6 发布（2026-08-29）
+
+- 用户授权后，Surface Pen Canvas 连线控件回归修复以 commit `60bcdef` 推送至 `codex/stage-8-dragger-integration`，tag `0.1.6` 指向该提交。
+- 正式 GitHub Release 为 `https://github.com/Rex-Diego/dragdrop/releases/tag/0.1.6`，不是 draft 或 prerelease；`main.js`、`manifest.json`、`styles.css` 三个附件均为 uploaded，GitHub digest 与本地构建一致。

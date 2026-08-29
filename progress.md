@@ -617,9 +617,14 @@
 - 用户反馈 Surface Pen 笔尖在 Canvas 连接点或已有连线箭头上偶尔被误判为画布平移，导致无法创建或操作连线。
 - 根因是全局 pen 捕获器只依据 `event.target` 判断原生控件；连接点命中可能落到 wrapper 或节点下层。现新增按指针坐标检测可见连接点、连线交互路径和路径标签的保护，这些区域完全交给 Obsidian 原生事件链。
 - 几何候选排除了覆盖整个画布的 `.canvas-edges` 容器，仅检查连接点、边路径和标签本身，避免误禁用普通笔尖平移。
-- 已通过 `npm.cmd run lint`、`npm.cmd run typecheck`、`npm.cmd run test`（21 files / 121 tests）、`npm.cmd run build`、`node --check main.js` 和 `git diff --check`。本轮发布版本升为 `0.1.6`，正在执行提交、推送和 GitHub Release。
+- 已通过 `npm.cmd run lint`、`npm.cmd run typecheck`、`npm.cmd run test`（21 files / 121 tests）、`npm.cmd run build`、`node --check main.js` 和 `git diff --check`。发布版本为 `0.1.6`；commit、push 和 GitHub Release 已完成，详见下方记录。
 
 ### 0.1.5 提交、推送与 Release
 
 - 已创建发布代码 commit `f2f2510`（`Add Canvas selection menu auto-dismiss`）并推送到 `codex/stage-8-dragger-integration`。
 - 已创建正式 GitHub Release `0.1.5`：`https://github.com/Rex-Diego/dragdrop/releases/tag/0.1.5`。Release 指向 `f2f2510`，不是 draft 或 prerelease，`main.js`、`manifest.json` 和 `styles.css` 均已上传并通过 SHA-256 核对。
+
+### 0.1.6 提交、推送与 Release
+
+- 已创建发布代码 commit `60bcdef`（`Release 0.1.6 Surface Pen Canvas connection controls`）并推送到 `codex/stage-8-dragger-integration`；tag `0.1.6` 指向该提交。
+- 已创建正式 GitHub Release `0.1.6`：`https://github.com/Rex-Diego/dragdrop/releases/tag/0.1.6`。Release 不是 draft 或 prerelease，`main.js`、`manifest.json` 和 `styles.css` 均已上传；GitHub SHA-256 digest 与本地构建逐项一致。
