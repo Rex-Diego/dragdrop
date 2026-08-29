@@ -609,5 +609,10 @@
 - 将 pending/active 菜单观察器和 Canvas iframe 发现观察器改为观察整个 `Document`，以覆盖 Canvas 重建 body 或 iframe 节点的情况；未引入新的全局 listener，也未改变 Markdown、PDF++ 或块抓手菜单路径。
 - 复核 Obsidian `Menu.showAtMouseEvent` 与编辑器事件链后，补充 iframe `body` target 兜底，并让设置刷新立即更新 active menu 的小数秒数；hover/focus 状态分别跟踪，避免焦点仍在菜单内时误启动计时。
 - 本轮最终质量链均通过：`npm.cmd run lint`、`npm.cmd run typecheck`、`npm.cmd run test`（21 files / 120 tests）、`npm.cmd run build`、`node --check main.js` 与 `git diff --check`。新 bundle 为 255,089 bytes，SHA-256 `66C16BE339CCB218B7E00486322117264BC744974285958F050A52B5BEB40B74`。
-- 已将 `manifest.json`、`main.js`、`styles.css`、`README.md`、`LICENSE`、`versions.json` 同步到 `.obsidian/plugins/dragdrop` 和 `plugins-dev/plugin`；六个文件三方 SHA-256 一致，未覆盖标准目录的 `data.json` 或开发目录的 `graph-worker.js`。本轮发布版本拟定为 `0.1.5`；commit、push 和 GitHub Release 待完成。
+- 已将 `manifest.json`、`main.js`、`styles.css`、`README.md`、`LICENSE`、`versions.json` 同步到 `.obsidian/plugins/dragdrop` 和 `plugins-dev/plugin`；六个文件三方 SHA-256 一致，未覆盖标准目录的 `data.json` 或开发目录的 `graph-worker.js`。发布版本为 `0.1.5`；commit、push 和 GitHub Release 已完成，详见下方记录。
 - Canvas 实机验证仍待解锁 Obsidian 窗口后完成；本轮不把静态构建和单元测试结果记为真实 UI 验收。
+
+### 0.1.5 提交、推送与 Release
+
+- 已创建发布代码 commit `f2f2510`（`Add Canvas selection menu auto-dismiss`）并推送到 `codex/stage-8-dragger-integration`。
+- 已创建正式 GitHub Release `0.1.5`：`https://github.com/Rex-Diego/dragdrop/releases/tag/0.1.5`。Release 指向 `f2f2510`，不是 draft 或 prerelease，`main.js`、`manifest.json` 和 `styles.css` 均已上传并通过 SHA-256 核对。

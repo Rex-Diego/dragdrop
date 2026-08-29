@@ -633,3 +633,8 @@
 - 不能仅在 iframe 文档观察 `.menu` 或使用 iframe viewport 尺寸定位，否则菜单既不会被接管，也会出现偏移。来源 iframe 卸载、重载、Popout 关闭和插件 unload 仍需解除父子文档关联及所有 observer/timer。
 - Obsidian 编辑器的 context-menu 事件在部分 Canvas 卡片路径上可能以 iframe `body` 为 target；Canvas 子文档适配因此以 body 作为安全容器兜底，再用 Selection anchor/focus containment 校验，避免因 target 不在 `.markdown-source-view` 而漏掉菜单。
 - 设置刷新时需同步已有 active menu 的 timeout；hover/focus 分别记录状态，只有两者都离开后才重新开始倒计时。
+
+### 0.1.5 发布（2026-08-29）
+
+- 用户授权后，Canvas 卡片文字选区菜单功能以 commit `f2f2510` 推送至 `codex/stage-8-dragger-integration`，tag `0.1.5` 指向该提交。
+- 正式 GitHub Release 为 `https://github.com/Rex-Diego/dragdrop/releases/tag/0.1.5`，不是 draft 或 prerelease；`main.js`、`manifest.json`、`styles.css` 三个附件均为 uploaded，GitHub digest 与本地构建一致。
