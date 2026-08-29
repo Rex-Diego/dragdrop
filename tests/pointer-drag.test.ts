@@ -5,6 +5,7 @@ import {
   canvasPenInteractionForEvent,
   createCanvasPointerEventInit,
   hasCrossedPointerDragThreshold,
+  isPointInsidePointerRect,
   isSurfacePenSideButton,
   matchesPointerDrag,
   TOUCH_DRAG_THRESHOLD,
@@ -74,5 +75,13 @@ describe("pointer drag threshold", () => {
     expect(init.isPrimary).toBe(true);
     expect(init.button).toBe(0);
     expect(init.buttons).toBe(1);
+  });
+
+  it("recognizes only visible connection and edge hit rectangles", () => {
+    const rect = { left: 10, right: 30, top: 20, bottom: 40, width: 20, height: 20 };
+    expect(isPointInsidePointerRect(rect, 10, 20)).toBe(true);
+    expect(isPointInsidePointerRect(rect, 30, 40)).toBe(true);
+    expect(isPointInsidePointerRect(rect, 31, 40)).toBe(false);
+    expect(isPointInsidePointerRect({ ...rect, width: 0 }, 20, 30)).toBe(false);
   });
 });

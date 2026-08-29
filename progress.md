@@ -612,6 +612,13 @@
 - 已将 `manifest.json`、`main.js`、`styles.css`、`README.md`、`LICENSE`、`versions.json` 同步到 `.obsidian/plugins/dragdrop` 和 `plugins-dev/plugin`；六个文件三方 SHA-256 一致，未覆盖标准目录的 `data.json` 或开发目录的 `graph-worker.js`。发布版本为 `0.1.5`；commit、push 和 GitHub Release 已完成，详见下方记录。
 - Canvas 实机验证仍待解锁 Obsidian 窗口后完成；本轮不把静态构建和单元测试结果记为真实 UI 验收。
 
+## 会话：2026-08-29（Surface Pen Canvas 连线控件回归）
+
+- 用户反馈 Surface Pen 笔尖在 Canvas 连接点或已有连线箭头上偶尔被误判为画布平移，导致无法创建或操作连线。
+- 根因是全局 pen 捕获器只依据 `event.target` 判断原生控件；连接点命中可能落到 wrapper 或节点下层。现新增按指针坐标检测可见连接点、连线交互路径和路径标签的保护，这些区域完全交给 Obsidian 原生事件链。
+- 几何候选排除了覆盖整个画布的 `.canvas-edges` 容器，仅检查连接点、边路径和标签本身，避免误禁用普通笔尖平移。
+- 已通过 `npm.cmd run lint`、`npm.cmd run typecheck`、`npm.cmd run test`（21 files / 121 tests）、`npm.cmd run build`、`node --check main.js` 和 `git diff --check`。本轮发布版本升为 `0.1.6`，正在执行提交、推送和 GitHub Release。
+
 ### 0.1.5 提交、推送与 Release
 
 - 已创建发布代码 commit `f2f2510`（`Add Canvas selection menu auto-dismiss`）并推送到 `codex/stage-8-dragger-integration`。

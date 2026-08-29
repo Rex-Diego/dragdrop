@@ -1889,6 +1889,9 @@ function canvasPenInteractionForEvent(event) {
 function canvasPenButtonsForButton(button) {
   return button === 1 ? 4 : 1;
 }
+function isPointInsidePointerRect(rect, clientX, clientY) {
+  return rect.width > 0 && rect.height > 0 && clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= rect.bottom;
+}
 function createCanvasPointerEventInit(source, ownerWindow2, button, buttons) {
   return {
     view: ownerWindow2,
@@ -1953,6 +1956,7 @@ var DragSessionManager = class extends import_obsidian6.Component {
   pointerDrag = null;
   selectionPointer = null;
   canvasPenDrag = null;
+  canvasPenNativePointer = null;
   canvasPenContextMenuSuppression = null;
   syntheticCanvasEvents = /* @__PURE__ */ new WeakSet();
   ghostElement = null;
@@ -2672,20 +2676,45 @@ var DragSessionManager = class extends import_obsidian6.Component {
     if (this.canvasPenDrag || this.pointerDrag) return;
     const target = this.elementFromEventTarget(event.target);
     if (!target) return;
-    const interaction = this.findCanvasPenInteraction(target, interactionType);
+    const interaction = this.findCanvasPenInteraction(
+      target,
+      interactionType,
+      event.clientX,
+      event.clientY
+    );
+    if (interaction === "native") {
+      this.canvasPenNativePointer = {
+        pointerId: event.pointerId,
+        ownerDocument: target.ownerDocument
+      };
+      return;
+    }
     if (!interaction || !this.beginCanvasPenDrag(event, interaction)) return;
     event.preventDefault();
     event.stopImmediatePropagation();
   }
   handleCanvasPenPointerMove(event) {
     if (this.syntheticCanvasEvents.has(event)) return;
+    if (this.isCanvasPenNativePointer(event)) return;
     if (!this.canvasPenDrag) {
       const interactionType = canvasPenInteractionForEvent(event);
       if (!interactionType || interactionType === "select" && !this.host.config.surfacePenSideButtonDrag) return;
       if (this.pointerDrag) return;
       const target = this.elementFromEventTarget(event.target);
       if (!target) return;
-      const interaction = this.findCanvasPenInteraction(target, interactionType);
+      const interaction = this.findCanvasPenInteraction(
+        target,
+        interactionType,
+        event.clientX,
+        event.clientY
+      );
+      if (interaction === "native") {
+        this.canvasPenNativePointer = {
+          pointerId: event.pointerId,
+          ownerDocument: target.ownerDocument
+        };
+        return;
+      }
       if (!interaction || !this.beginCanvasPenDrag(event, interaction)) return;
     }
     const drag = this.canvasPenDrag;
@@ -2702,6 +2731,10 @@ var DragSessionManager = class extends import_obsidian6.Component {
   }
   handleCanvasPenPointerUp(event) {
     if (this.syntheticCanvasEvents.has(event)) return;
+    if (this.isCanvasPenNativePointer(event)) {
+      this.canvasPenNativePointer = null;
+      return;
+    }
     const drag = this.canvasPenDrag;
     if (!drag || drag.pointerId !== event.pointerId || !this.isSameEventDocument(event, drag.dispatchTarget.ownerDocument)) return;
     event.preventDefault();
@@ -2717,6 +2750,10 @@ var DragSessionManager = class extends import_obsidian6.Component {
   }
   handleCanvasPenPointerCancel(event) {
     if (this.syntheticCanvasEvents.has(event)) return;
+    if (this.isCanvasPenNativePointer(event)) {
+      this.canvasPenNativePointer = null;
+      return;
+    }
     const drag = this.canvasPenDrag;
     if (!drag || drag.pointerId !== event.pointerId || !this.isSameEventDocument(event, drag.dispatchTarget.ownerDocument)) return;
     event.preventDefault();
@@ -2840,13 +2877,16 @@ var DragSessionManager = class extends import_obsidian6.Component {
     if (!isNodeLike2(target)) return null;
     return isElementNode(target) ? target : target.parentElement;
   }
-  findCanvasPenInteraction(element, interactionType) {
+  findCanvasPenInteraction(element, interactionType, clientX, clientY) {
     let result = null;
     this.host.app.workspace.iterateAllLeaves((leaf) => {
       if (result || !isCanvasView(leaf.view)) return;
       const view = leaf.view;
       if (view.containerEl.ownerDocument === element.ownerDocument && view.containerEl.isConnected && view.containerEl.contains(element)) {
-        if (this.isCanvasControl(element)) return;
+        if (this.isCanvasControl(element) || this.isCanvasNativeTargetAtPoint(view, clientX, clientY)) {
+          result = "native";
+          return;
+        }
         const wrapper = this.findCanvasWrapper(view);
         if (!wrapper?.contains(element)) return;
         const nodeTarget = interactionType === "select" ? this.findCanvasNodeTarget(view, element) : null;
@@ -2884,8 +2924,24 @@ var DragSessionManager = class extends import_obsidian6.Component {
   }
   isCanvasControl(element) {
     return element.closest(
-      ".canvas-menu, .canvas-card-menu, .canvas-node-resizer, .canvas-node-connection-point, button, input, textarea, select"
+      ".canvas-menu, .canvas-card-menu, .canvas-node-resizer, .canvas-node-connection-point, .canvas-edge, .canvas-interaction-path, .canvas-display-path, .canvas-path-label, .canvas-path-label-wrapper, button, input, textarea, select"
     ) !== null;
+  }
+  isCanvasPenNativePointer(event) {
+    const nativePointer = this.canvasPenNativePointer;
+    return nativePointer !== null && nativePointer.pointerId === event.pointerId && this.isSameEventDocument(event, nativePointer.ownerDocument);
+  }
+  isCanvasNativeTargetAtPoint(view, clientX, clientY) {
+    const candidates = Array.from(view.containerEl.querySelectorAll(
+      ".canvas-node-connection-point, .canvas-edge, .canvas-interaction-path, .canvas-display-path, .canvas-path-label, .canvas-path-label-wrapper"
+    ));
+    for (const candidate of candidates) {
+      const rect = candidate.getBoundingClientRect();
+      if (isPointInsidePointerRect(rect, clientX, clientY)) {
+        return true;
+      }
+    }
+    return false;
   }
   findPointerCaptureElement(element) {
     let current = element;
@@ -3598,6 +3654,7 @@ var DragSessionManager = class extends import_obsidian6.Component {
     this.session = null;
     this.commitGate.reset();
     this.clearCanvasPenDrag();
+    this.canvasPenNativePointer = null;
     this.canvasPenContextMenuSuppression = null;
     if (this.pointerDrag) {
       this.clearMobileSelectionTimer(this.pointerDrag);

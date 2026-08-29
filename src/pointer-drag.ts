@@ -37,6 +37,21 @@ export function canvasPenButtonsForButton(button: 0 | 1): 1 | 4 {
   return button === 1 ? 4 : 1;
 }
 
+export function isPointInsidePointerRect(
+  rect: Pick<DOMRect, "left" | "right" | "top" | "bottom" | "width" | "height">,
+  clientX: number,
+  clientY: number,
+): boolean {
+  return (
+    rect.width > 0 &&
+    rect.height > 0 &&
+    clientX >= rect.left &&
+    clientX <= rect.right &&
+    clientY >= rect.top &&
+    clientY <= rect.bottom
+  );
+}
+
 export function createCanvasPointerEventInit(
   source: Pick<
     PointerEvent,
