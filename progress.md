@@ -601,3 +601,13 @@
 - 构建后的六个交付文件已同步到 `.obsidian/plugins/dragdrop` 与 `plugins-dev/plugin`，三方 SHA-256 一致；两个目标目录中的用户资产未被覆盖。
 - 已创建并推送发布代码 commit `387edb0`（`Release 0.1.4 Surface Pen Canvas controls`）到 `codex/stage-8-dragger-integration`；GitHub tag `0.1.4` 指向该提交。
 - 已创建正式 GitHub Release `0.1.4`：`https://github.com/Rex-Diego/dragdrop/releases/tag/0.1.4`。核对为非 draft、非 prerelease，`main.js`（244,992 bytes）、`manifest.json`（235 bytes）和 `styles.css`（7,156 bytes）均为 uploaded，GitHub SHA-256 与本地构建逐项一致。
+
+## 会话：2026-08-29（Canvas 卡片文字选区菜单）
+
+- 已将文字选区菜单的同一秒数语义扩展到 Canvas 卡片编辑器：支持 Canvas Markdown 卡片的 iframe 编辑器，以及当前文档中的直接 editable Canvas 内容；`-1/0/正数（含小数）`、半透明样式、避让定位、hover 暂停和离开重计时均复用现有路径。
+- Canvas iframe 的选区事件在子文档中捕获；菜单宿主按 Obsidian 的 frame-chain 缩放/偏移换算到外层文档，并在外层 `.menu` 上执行观察、定位、计时和卸载清理。Canvas iframe 的发现、load、替换和移除均由 owner-document 的组件生命周期管理。
+- 将 pending/active 菜单观察器和 Canvas iframe 发现观察器改为观察整个 `Document`，以覆盖 Canvas 重建 body 或 iframe 节点的情况；未引入新的全局 listener，也未改变 Markdown、PDF++ 或块抓手菜单路径。
+- 复核 Obsidian `Menu.showAtMouseEvent` 与编辑器事件链后，补充 iframe `body` target 兜底，并让设置刷新立即更新 active menu 的小数秒数；hover/focus 状态分别跟踪，避免焦点仍在菜单内时误启动计时。
+- 本轮最终质量链均通过：`npm.cmd run lint`、`npm.cmd run typecheck`、`npm.cmd run test`（21 files / 120 tests）、`npm.cmd run build`、`node --check main.js` 与 `git diff --check`。新 bundle 为 255,089 bytes，SHA-256 `66C16BE339CCB218B7E00486322117264BC744974285958F050A52B5BEB40B74`。
+- 已将 `manifest.json`、`main.js`、`styles.css`、`README.md`、`LICENSE`、`versions.json` 同步到 `.obsidian/plugins/dragdrop` 和 `plugins-dev/plugin`；六个文件三方 SHA-256 一致，未覆盖标准目录的 `data.json` 或开发目录的 `graph-worker.js`。本轮发布版本拟定为 `0.1.5`；commit、push 和 GitHub Release 待完成。
+- Canvas 实机验证仍待解锁 Obsidian 窗口后完成；本轮不把静态构建和单元测试结果记为真实 UI 验收。

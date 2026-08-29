@@ -22,6 +22,12 @@ export interface SelectionMenuPlacement {
   top: number;
 }
 
+export interface SelectionMenuFrameTransform {
+  offsetX: number;
+  offsetY: number;
+  scale: number;
+}
+
 export const SELECTION_MENU_GAP = 24;
 const VIEWPORT_PADDING = 8;
 
@@ -52,6 +58,24 @@ export function placeSelectionMenu(
       : clamp(verticalBelow, VIEWPORT_PADDING, viewport.height - menu.height - VIEWPORT_PADDING);
 
   return { left, top };
+}
+
+/** Convert a selection rect from an embedded document into its menu host viewport. */
+export function transformSelectionMenuRect(
+  selection: SelectionMenuRect,
+  transform: SelectionMenuFrameTransform,
+): SelectionMenuRect {
+  const scale = Number.isFinite(transform.scale) && transform.scale > 0
+    ? transform.scale
+    : 1;
+  const offsetX = Number.isFinite(transform.offsetX) ? transform.offsetX : 0;
+  const offsetY = Number.isFinite(transform.offsetY) ? transform.offsetY : 0;
+  return {
+    left: selection.left * scale + offsetX,
+    top: selection.top * scale + offsetY,
+    right: selection.right * scale + offsetX,
+    bottom: selection.bottom * scale + offsetY,
+  };
 }
 
 function clamp(value: number, minimum: number, maximum: number): number {

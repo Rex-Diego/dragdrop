@@ -3,6 +3,7 @@ import {
   SELECTION_MENU_GAP,
   placeSelectionMenu,
   selectionMenuBehavior,
+  transformSelectionMenuRect,
 } from "../src/selection-menu-model";
 
 describe("selection menu behavior", () => {
@@ -35,5 +36,19 @@ describe("selection menu behavior", () => {
       { width: 700, height: 600 },
       { width: 500, height: 400 },
     )).toEqual({ left: 8, top: 8 });
+  });
+
+  it("maps Canvas iframe selection coordinates into the menu host viewport", () => {
+    expect(transformSelectionMenuRect(
+      { left: 10, top: 20, right: 110, bottom: 60 },
+      { offsetX: 300, offsetY: 40, scale: 1.5 },
+    )).toEqual({ left: 315, top: 70, right: 465, bottom: 130 });
+  });
+
+  it("uses finite identity defaults for an unavailable frame transform", () => {
+    expect(transformSelectionMenuRect(
+      { left: 10, top: 20, right: 110, bottom: 60 },
+      { offsetX: Number.NaN, offsetY: Number.POSITIVE_INFINITY, scale: 0 },
+    )).toEqual({ left: 10, top: 20, right: 110, bottom: 60 });
   });
 });

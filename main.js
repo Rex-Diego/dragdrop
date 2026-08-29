@@ -4860,6 +4860,17 @@ function placeSelectionMenu(selection, menu, viewport) {
   const top = verticalBelow + menu.height <= viewport.height - VIEWPORT_PADDING ? verticalBelow : verticalAbove >= VIEWPORT_PADDING ? verticalAbove : clamp(verticalBelow, VIEWPORT_PADDING, viewport.height - menu.height - VIEWPORT_PADDING);
   return { left, top };
 }
+function transformSelectionMenuRect(selection, transform) {
+  const scale = Number.isFinite(transform.scale) && transform.scale > 0 ? transform.scale : 1;
+  const offsetX = Number.isFinite(transform.offsetX) ? transform.offsetX : 0;
+  const offsetY = Number.isFinite(transform.offsetY) ? transform.offsetY : 0;
+  return {
+    left: selection.left * scale + offsetX,
+    top: selection.top * scale + offsetY,
+    right: selection.right * scale + offsetX,
+    bottom: selection.bottom * scale + offsetY
+  };
+}
 function clamp(value, minimum, maximum) {
   return Math.max(minimum, Math.min(maximum, value));
 }
@@ -4869,6 +4880,10 @@ var MENU_SELECTOR = ".menu";
 var MARKDOWN_VIEW_SELECTOR = ".markdown-source-view, .markdown-preview-view";
 var PDF_VIEW_SELECTOR = ".pdf-container, .pdf-viewer-container";
 var PDF_TEXT_LAYER_SELECTOR = ".pdf-container .textLayer, .pdf-viewer-container .textLayer";
+var CANVAS_NODE_CONTENT_SELECTOR = ".canvas-node-content";
+var CANVAS_IFRAME_SELECTOR = ".canvas-node-content iframe.embed-iframe";
+var CANVAS_IFRAME_ELEMENT_SELECTOR = "iframe.embed-iframe";
+var CANVAS_EDITABLE_SELECTOR = `${CANVAS_NODE_CONTENT_SELECTOR} ${MARKDOWN_VIEW_SELECTOR}, ${CANVAS_NODE_CONTENT_SELECTOR} [contenteditable="true"]`;
 var SELECTION_MENU_CLASS = "dragdrop-selection-menu";
 var PENDING_MENU_TIMEOUT_MS = 250;
 function isRecord4(value) {
@@ -4896,29 +4911,100 @@ function elementForNode(node) {
   if (!node) return null;
   return node.nodeType === 1 ? node : node.parentElement;
 }
-function selectionMenuTargetForElement(target) {
+function frameElementForDocument(ownerDocument) {
+  try {
+    const frameElement = ownerDocument.defaultView?.frameElement;
+    return isNodeLike3(frameElement) && frameElement.nodeType === 1 ? frameElement : null;
+  } catch {
+    return null;
+  }
+}
+function menuHostForDocument(ownerDocument) {
+  const initialWindow = ownerDocument.defaultView;
+  if (!initialWindow) return null;
+  let ownerWindow2 = initialWindow;
+  let frameElement = frameElementForDocument(ownerDocument);
+  let offsetX = 0;
+  let offsetY = 0;
+  let scale = 1;
+  const visitedWindows = /* @__PURE__ */ new Set();
+  while (frameElement && !visitedWindows.has(ownerWindow2)) {
+    visitedWindows.add(ownerWindow2);
+    let frameRect;
+    try {
+      frameRect = frameElement.getBoundingClientRect();
+    } catch {
+      return null;
+    }
+    const clientWidth = frameElement.clientWidth;
+    const frameScale = clientWidth > 0 && Number.isFinite(frameRect.width / clientWidth) ? frameRect.width / clientWidth : 1;
+    scale *= frameScale;
+    offsetX = offsetX * frameScale + frameRect.left;
+    offsetY = offsetY * frameScale + frameRect.top;
+    const parentWindow = frameElement.ownerDocument.defaultView;
+    if (!parentWindow) return null;
+    ownerWindow2 = parentWindow;
+    frameElement = frameElementForDocument(parentWindow.document);
+  }
+  return {
+    ownerDocument: ownerWindow2.document,
+    ownerWindow: ownerWindow2,
+    transform: { offsetX, offsetY, scale }
+  };
+}
+function isCanvasFrameElement(frameElement) {
+  return frameElement?.matches(CANVAS_IFRAME_ELEMENT_SELECTOR) === true && frameElement.closest(CANVAS_NODE_CONTENT_SELECTOR) !== null;
+}
+function isCanvasFrameDocument(ownerDocument) {
+  return isCanvasFrameElement(frameElementForDocument(ownerDocument));
+}
+function canvasTargetForElement(ownerDocument, target) {
+  if (isCanvasFrameDocument(ownerDocument)) {
+    const markdownView2 = target.closest(MARKDOWN_VIEW_SELECTOR);
+    if (markdownView2) return { container: markdownView2, kind: "canvas" };
+    const editable2 = target.closest('[contenteditable="true"]');
+    if (editable2) return { container: editable2, kind: "canvas" };
+    return ownerDocument.body ? { container: ownerDocument.body, kind: "canvas" } : null;
+  }
+  const canvasContent = target.closest(CANVAS_NODE_CONTENT_SELECTOR);
+  if (!canvasContent) return null;
+  const editable = target.closest(CANVAS_EDITABLE_SELECTOR) ?? canvasContent.querySelector(`${MARKDOWN_VIEW_SELECTOR}, [contenteditable="true"]`);
+  if (!editable || !canvasContent.contains(editable)) return null;
+  const markdownView = editable.closest(MARKDOWN_VIEW_SELECTOR);
+  return {
+    container: markdownView ?? canvasContent,
+    kind: "canvas"
+  };
+}
+function selectionMenuTargetForElement(ownerDocument, target) {
   const pdfTextLayer = target.closest(PDF_TEXT_LAYER_SELECTOR);
   if (pdfTextLayer) {
     return {
       container: pdfTextLayer.closest(PDF_VIEW_SELECTOR) ?? pdfTextLayer,
-      isPdf: true
+      kind: "pdf"
     };
   }
+  const canvasTarget = canvasTargetForElement(ownerDocument, target);
+  if (canvasTarget) return canvasTarget;
   const markdownView = target.closest(MARKDOWN_VIEW_SELECTOR);
-  if (markdownView) return { container: markdownView, isPdf: false };
+  if (markdownView) return { container: markdownView, kind: "markdown" };
   return null;
 }
 function selectionRectForTarget(ownerDocument, target) {
-  const selectionTarget = selectionMenuTargetForElement(target);
+  const selectionTarget = selectionMenuTargetForElement(ownerDocument, target);
   if (!selectionTarget) return null;
   const selection = ownerDocument.getSelection();
   if (!selection || selection.rangeCount === 0 || selection.isCollapsed) return null;
   if (selection.toString().trim().length === 0) return null;
   const anchorElement = elementForNode(selection.anchorNode);
   if (!anchorElement || !selectionTarget.container.contains(anchorElement)) return null;
-  if (selectionTarget.isPdf) {
+  if (selectionTarget.kind === "pdf") {
     const focusElement = elementForNode(selection.focusNode);
     if (!focusElement || !selectionTarget.container.contains(focusElement) || !anchorElement.closest(PDF_TEXT_LAYER_SELECTOR) || !focusElement.closest(PDF_TEXT_LAYER_SELECTOR)) return null;
+  }
+  if (selectionTarget.kind === "canvas") {
+    const focusElement = elementForNode(selection.focusNode);
+    if (!focusElement || !selectionTarget.container.contains(focusElement)) return null;
   }
   const rect = selection.getRangeAt(0).getBoundingClientRect();
   if (!Number.isFinite(rect.left) || !Number.isFinite(rect.top) || !Number.isFinite(rect.right) || !Number.isFinite(rect.bottom) || rect.width <= 0 && rect.height <= 0) {
@@ -4937,6 +5023,9 @@ var SelectionMenuFeature = class extends import_obsidian9.Component {
     this.host = host;
   }
   documentStates = /* @__PURE__ */ new Map();
+  directDocuments = /* @__PURE__ */ new Set();
+  embeddedParents = /* @__PURE__ */ new Map();
+  unregisteringDocuments = /* @__PURE__ */ new Set();
   onload() {
     this.registerDocument(this.host.app.workspace.containerEl.ownerDocument);
     this.host.app.workspace.onLayoutReady(() => {
@@ -4963,14 +5052,29 @@ var SelectionMenuFeature = class extends import_obsidian9.Component {
     }
   }
   refresh() {
+    const behavior = selectionMenuBehavior(this.host.config.selectionMenuAutoDismissSeconds);
     for (const state of this.documentStates.values()) {
       this.clearPendingMenu(state);
-      if (selectionMenuBehavior(this.host.config.selectionMenuAutoDismissSeconds) !== "customize") {
+      if (behavior !== "customize") {
         this.clearActiveMenu(state);
+        continue;
+      }
+      const active = state.active;
+      if (active) {
+        active.dismissSeconds = this.host.config.selectionMenuAutoDismissSeconds;
+        this.cancelDismissTimer(state, active);
+        this.scheduleDismissTimer(state, active);
       }
     }
   }
   registerDocument(ownerDocument) {
+    this.directDocuments.add(ownerDocument);
+    this.registerDocumentInternal(ownerDocument);
+  }
+  registerEmbeddedDocument(ownerDocument) {
+    this.registerDocumentInternal(ownerDocument);
+  }
+  registerDocumentInternal(ownerDocument) {
     if (this.documentStates.has(ownerDocument)) return;
     const ownerWindow2 = ownerDocument.defaultView;
     if (!ownerWindow2) return;
@@ -4982,7 +5086,9 @@ var SelectionMenuFeature = class extends import_obsidian9.Component {
       pending: null,
       pendingObserver: null,
       pendingTimer: null,
-      active: null
+      active: null,
+      embeddedObserver: null,
+      embeddedFrames: /* @__PURE__ */ new Map()
     };
     this.documentStates.set(ownerDocument, state);
     this.addChild(component);
@@ -4992,33 +5098,163 @@ var SelectionMenuFeature = class extends import_obsidian9.Component {
     component.registerDomEvent(ownerDocument, "pointerup", (event) => {
       this.handlePointerUp(state, event);
     }, true);
+    this.observeEmbeddedCanvasFrames(state);
   }
   unregisterDocument(ownerDocument) {
+    this.directDocuments.delete(ownerDocument);
+    if (this.unregisteringDocuments.has(ownerDocument)) return;
     const state = this.documentStates.get(ownerDocument);
     if (!state) return;
-    this.clearPendingMenu(state);
-    this.clearActiveMenu(state);
-    state.component.unload();
-    this.removeChild(state.component);
-    this.documentStates.delete(ownerDocument);
+    this.unregisteringDocuments.add(ownerDocument);
+    try {
+      for (const parentDocument of Array.from(this.embeddedParents.get(ownerDocument) ?? [])) {
+        const parentState = this.documentStates.get(parentDocument);
+        if (!parentState) continue;
+        for (const [frame, frameState] of Array.from(parentState.embeddedFrames.entries())) {
+          if (frameState.childDocument === ownerDocument) {
+            this.detachEmbeddedDocument(parentState, frame, ownerDocument);
+          }
+        }
+      }
+      for (const [frame, frameState] of Array.from(state.embeddedFrames.entries())) {
+        this.detachEmbeddedFrame(state, frame, frameState);
+      }
+      this.embeddedParents.delete(ownerDocument);
+      this.clearPendingMenu(state);
+      this.clearActiveMenu(state);
+      state.embeddedObserver?.disconnect();
+      state.embeddedObserver = null;
+      state.component.unload();
+      this.removeChild(state.component);
+      this.documentStates.delete(ownerDocument);
+    } finally {
+      this.unregisteringDocuments.delete(ownerDocument);
+    }
+  }
+  menuContextForSelection(sourceState, targetKind, selectionRect) {
+    if (targetKind !== "canvas") {
+      return { state: sourceState, selectionRect };
+    }
+    const frameElement = frameElementForDocument(sourceState.ownerDocument);
+    if (!isCanvasFrameElement(frameElement)) {
+      return { state: sourceState, selectionRect };
+    }
+    const host = menuHostForDocument(sourceState.ownerDocument);
+    if (!host) return { state: sourceState, selectionRect };
+    let hostState = this.documentStates.get(host.ownerDocument);
+    if (!hostState) {
+      this.registerDocument(host.ownerDocument);
+      hostState = this.documentStates.get(host.ownerDocument);
+    }
+    if (!hostState) return { state: sourceState, selectionRect };
+    return {
+      state: hostState,
+      selectionRect: transformSelectionMenuRect(selectionRect, host.transform)
+    };
   }
   handleContextMenu(state, event) {
     if (event.defaultPrevented) return;
     const target = elementFromEventTarget2(event.target);
     if (!target) return;
-    const selectionTarget = selectionMenuTargetForElement(target);
+    const selectionTarget = selectionMenuTargetForElement(state.ownerDocument, target);
     if (!selectionTarget) return;
     const selectionRect = selectionRectForTarget(state.ownerDocument, target);
     if (!selectionRect) return;
-    this.armSelectionMenu(state, selectionRect, event, selectionTarget.isPdf);
+    const context = this.menuContextForSelection(state, selectionTarget.kind, selectionRect);
+    this.armSelectionMenu(
+      context.state,
+      context.selectionRect,
+      event,
+      selectionTarget.kind === "pdf"
+    );
   }
   handlePointerUp(state, event) {
     if (event.defaultPrevented) return;
     const target = elementFromEventTarget2(event.target);
-    if (!target || !target.closest(PDF_TEXT_LAYER_SELECTOR)) return;
+    if (!target) return;
+    const selectionTarget = selectionMenuTargetForElement(state.ownerDocument, target);
+    if (!selectionTarget || selectionTarget.kind !== "pdf") return;
     const selectionRect = selectionRectForTarget(state.ownerDocument, target);
     if (!selectionRect) return;
-    this.armSelectionMenu(state, selectionRect, event, true);
+    const context = this.menuContextForSelection(state, selectionTarget.kind, selectionRect);
+    this.armSelectionMenu(context.state, context.selectionRect, event, true);
+  }
+  observeEmbeddedCanvasFrames(state) {
+    const observer = new state.ownerWindow.MutationObserver(() => {
+      this.syncEmbeddedCanvasFrames(state);
+    });
+    state.embeddedObserver = observer;
+    observer.observe(state.ownerDocument, { childList: true, subtree: true });
+    state.component.register(() => observer.disconnect());
+    this.syncEmbeddedCanvasFrames(state);
+  }
+  syncEmbeddedCanvasFrames(state) {
+    if (this.documentStates.get(state.ownerDocument) !== state) return;
+    const frames = new Set(
+      Array.from(state.ownerDocument.querySelectorAll(CANVAS_IFRAME_SELECTOR))
+    );
+    for (const [frame, frameState] of Array.from(state.embeddedFrames.entries())) {
+      if (!frames.has(frame)) this.detachEmbeddedFrame(state, frame, frameState);
+    }
+    for (const frame of frames) {
+      let frameState = state.embeddedFrames.get(frame);
+      if (!frameState) {
+        const frameComponent = new import_obsidian9.Component();
+        state.component.addChild(frameComponent);
+        frameComponent.registerDomEvent(frame, "load", () => {
+          this.syncEmbeddedCanvasFrames(state);
+        });
+        frameState = { childDocument: null, component: frameComponent };
+        state.embeddedFrames.set(frame, frameState);
+      }
+      const childDocument = this.contentDocumentForFrame(frame);
+      if (childDocument === frameState.childDocument) continue;
+      if (frameState.childDocument) {
+        this.detachEmbeddedDocument(state, frame, frameState.childDocument);
+      }
+      if (childDocument) {
+        frameState.childDocument = childDocument;
+        this.addEmbeddedParent(childDocument, state.ownerDocument);
+        this.registerEmbeddedDocument(childDocument);
+      }
+    }
+  }
+  contentDocumentForFrame(frame) {
+    try {
+      const childDocument = frame.contentDocument;
+      return childDocument && isDocumentLike3(childDocument) && childDocument.defaultView ? childDocument : null;
+    } catch {
+      return null;
+    }
+  }
+  addEmbeddedParent(childDocument, parentDocument) {
+    let parents = this.embeddedParents.get(childDocument);
+    if (!parents) {
+      parents = /* @__PURE__ */ new Set();
+      this.embeddedParents.set(childDocument, parents);
+    }
+    parents.add(parentDocument);
+  }
+  removeEmbeddedParent(childDocument, parentDocument) {
+    const parents = this.embeddedParents.get(childDocument);
+    if (!parents) return;
+    parents.delete(parentDocument);
+    if (parents.size > 0) return;
+    this.embeddedParents.delete(childDocument);
+    if (!this.directDocuments.has(childDocument)) this.unregisterDocument(childDocument);
+  }
+  detachEmbeddedDocument(state, frame, childDocument) {
+    const frameState = state.embeddedFrames.get(frame);
+    if (!frameState || frameState.childDocument !== childDocument) return;
+    frameState.childDocument = null;
+    this.removeEmbeddedParent(childDocument, state.ownerDocument);
+  }
+  detachEmbeddedFrame(state, frame, frameState) {
+    if (frameState.childDocument) {
+      this.detachEmbeddedDocument(state, frame, frameState.childDocument);
+    }
+    state.component.removeChild(frameState.component);
+    state.embeddedFrames.delete(frame);
   }
   armSelectionMenu(state, selectionRect, event, retainAfterActivation) {
     const behavior = selectionMenuBehavior(this.host.config.selectionMenuAutoDismissSeconds);
@@ -5047,14 +5283,12 @@ var SelectionMenuFeature = class extends import_obsidian9.Component {
         retainAfterActivation
       };
     }
-    const targetRoot = state.ownerDocument.body ?? state.ownerDocument.documentElement;
-    if (!targetRoot) return;
     if (!state.pendingObserver) {
       const observer = new state.ownerWindow.MutationObserver(() => {
         this.activatePendingMenu(state);
       });
       state.pendingObserver = observer;
-      observer.observe(targetRoot, { childList: true, subtree: true });
+      observer.observe(state.ownerDocument, { childList: true, subtree: true });
     }
     if (state.pendingTimer !== null) state.ownerWindow.clearTimeout(state.pendingTimer);
     state.pendingTimer = state.ownerWindow.setTimeout(() => {
@@ -5081,31 +5315,32 @@ var SelectionMenuFeature = class extends import_obsidian9.Component {
       observer,
       dismissTimer: null,
       positionFrame: null,
-      dismissSeconds: pending.dismissSeconds
+      dismissSeconds: pending.dismissSeconds,
+      isHovered: false,
+      isFocused: false
     };
     active = activeMenu;
     state.active = activeMenu;
     state.component.addChild(component);
-    const observerRoot = state.ownerDocument.body ?? state.ownerDocument.documentElement;
-    if (!observerRoot) {
-      this.clearActiveMenu(state, activeMenu);
-      return;
-    }
-    activeMenu.observer.observe(observerRoot, {
+    activeMenu.observer.observe(state.ownerDocument, {
       childList: true,
       subtree: true
     });
     component.registerDomEvent(menu, "pointerenter", () => {
+      activeMenu.isHovered = true;
       this.cancelDismissTimer(state, activeMenu);
     });
     component.registerDomEvent(menu, "pointerleave", () => {
+      activeMenu.isHovered = false;
       this.scheduleDismissTimer(state, activeMenu);
     });
     component.registerDomEvent(menu, "focusin", () => {
+      activeMenu.isFocused = true;
       this.cancelDismissTimer(state, activeMenu);
     });
     component.registerDomEvent(menu, "focusout", (event) => {
       if (isNodeLike3(event.relatedTarget) && menu.contains(event.relatedTarget)) return;
+      activeMenu.isFocused = false;
       this.scheduleDismissTimer(state, activeMenu);
     });
     this.positionMenu(state, activeMenu, pending.selectionRect);
@@ -5127,7 +5362,7 @@ var SelectionMenuFeature = class extends import_obsidian9.Component {
     });
   }
   scheduleDismissTimer(state, active) {
-    if (state.active !== active || active.dismissSeconds <= 0) return;
+    if (state.active !== active || active.dismissSeconds <= 0 || active.isHovered || active.isFocused) return;
     this.cancelDismissTimer(state, active);
     active.dismissTimer = state.ownerWindow.setTimeout(() => {
       if (state.active !== active) return;

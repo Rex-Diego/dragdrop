@@ -70,7 +70,7 @@ Touch and pen drops support a Canvas in the same Obsidian window. Mouse dragging
 
 ### Text selection menu
 
-**Text selection menu timeout** controls the menu shown after selecting text in a Markdown view or a PDF/PDF++ text layer. Set it to `-1` to leave the host's normal menu unchanged, `0` to hide the selection menu, or a positive number (including decimals such as `0.7`) to show a semi-transparent menu away from the selection and close it after that many seconds. Hovering the menu pauses its timer; leaving it starts a fresh timer. This setting does not affect the Copy, Cut, and Delete menu on block handles.
+**Text selection menu timeout** controls the menu shown after selecting text in a Markdown view, a PDF/PDF++ text layer, or an editable Markdown card in Canvas. Set it to `-1` to leave the host's normal menu unchanged, `0` to hide the selection menu, or a positive number (including decimals such as `0.7`) to show a semi-transparent menu away from the selection and close it after that many seconds. Hovering the menu pauses its timer; leaving it starts a fresh timer. This setting does not affect the Copy, Cut, and Delete menu on block handles.
 
 ## Source content and generated notes
 
@@ -152,7 +152,7 @@ The settings tab includes:
 - Handle position (left/right) and visibility (hover/focus or always visible)
 - Surface Pen side-button drag
 - Mobile block interactions (disabled by default; long-press selection mode)
-- Text selection menu timeout (`-1` keeps the normal menu, `0` hides it, and a positive value, including decimals, closes it after that many unhovered seconds)
+- Text selection menu timeout for Markdown, PDF/PDF++, and editable Canvas cards (`-1` keeps the normal menu, `0` hides it, and a positive value, including decimals, closes it after that many unhovered seconds)
 - Canvas selection to atomic note from the floating toolbar or command palette
 - Editable block embeds (disabled by default; requires an Obsidian reload)
 
