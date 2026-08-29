@@ -97,11 +97,13 @@ describe("action-oriented modifier settings", () => {
     expect(merged.selectionMenuAutoDismissSeconds).toBe(3);
   });
 
-  it("normalizes the text selection menu timeout without affecting legacy data", () => {
+  it("normalizes the text selection menu timeout while preserving fractional seconds", () => {
     expect(mergeSettings({ selectionMenuAutoDismissSeconds: -1 }).selectionMenuAutoDismissSeconds).toBe(-1);
     expect(mergeSettings({ selectionMenuAutoDismissSeconds: 0 }).selectionMenuAutoDismissSeconds).toBe(0);
-    expect(mergeSettings({ selectionMenuAutoDismissSeconds: 2.8 }).selectionMenuAutoDismissSeconds).toBe(2);
+    expect(mergeSettings({ selectionMenuAutoDismissSeconds: 0.7 }).selectionMenuAutoDismissSeconds).toBe(0.7);
+    expect(mergeSettings({ selectionMenuAutoDismissSeconds: 2.8 }).selectionMenuAutoDismissSeconds).toBe(2.8);
     expect(mergeSettings({ selectionMenuAutoDismissSeconds: 9_000 }).selectionMenuAutoDismissSeconds).toBe(3_600);
     expect(mergeSettings({ selectionMenuAutoDismissSeconds: -3 }).selectionMenuAutoDismissSeconds).toBe(-1);
+    expect(mergeSettings({ selectionMenuAutoDismissSeconds: -0.2 }).selectionMenuAutoDismissSeconds).toBe(-1);
   });
 });

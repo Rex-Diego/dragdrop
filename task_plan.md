@@ -167,9 +167,9 @@
 - [x] 同文件 Move 保留原文件路径与 block ID，不再显示引用风险确认；跨文件 Move、菜单 Cut/Delete 等破坏性操作仍保留确认
 - [x] 设置页按 Obsidian 界面语言提供完整英文与简体中文文案；原 `Do nothing` 改名为通俗的 `Cancel this drop` / `取消本次拖放`
 - [x] 右键块菜单移除全部 Convert 项及转换实现，仅保留 Copy/Cut/Delete；设置项显示为 `Block action menu` / `块操作菜单`
-- [x] 新增独立的文字选区右键菜单秒数设定：`-1` 保留原生菜单、`0` 不显示本次选区菜单、正整数显示半透明且避让选区的菜单，并在未 hover 时按秒数自动关闭；不复用块操作菜单开关
+- [x] 新增独立的文字选区菜单秒数设定：Markdown 与 PDF/PDF++ 选区均支持 `-1` 保留原生菜单、`0` 不显示本次选区菜单、正数秒数（允许小数）显示半透明且避让选区的菜单，并在未 hover 时按秒数自动关闭；不复用块操作菜单开关
 - [x] 为文字选区菜单补设置迁移、中英文文案、owner-document 生命周期、hover 暂停/离开重计时、菜单定位与关闭行为测试
-- [ ] 在 Obsidian 实机复核 Surface 选区菜单：`-1/0/正值`、半透明、避让选区、hover 暂停、离开重计时、主窗口与 Popout 清理
+- [ ] 在 Obsidian 实机复核 Markdown、PDF++ 和 Surface 选区菜单：`-1/0/正值`、半透明、避让选区、hover 暂停、离开重计时、主窗口与 Popout 清理
 - [x] 补纯模型、事件仲裁、CodeMirror adapter、事务 rollback、设置迁移和生命周期测试；移植测试同样履行 MIT 归属
 - [x] 依次通过 `npm.cmd run lint`、`npm.cmd run typecheck`、`npm.cmd run test`、`npm.cmd run build` 和 `node --check main.js`，warnings 必须为 0
 - [x] 更新 README：动作默认值、结构重排、多选、块菜单、跨文件目标、移动端限制、设置迁移、第三方致谢和已知私有 API 风险
@@ -194,7 +194,7 @@
 - [ ] 跨弹窗鼠标、Surface Pen、touch、Canvas drop 和 Canvas 归纳按钮不回归
 - [ ] clipboard 失败不删除，跨文件失败 rollback，已有 ID 的破坏性跨文件操作必须确认
 - [ ] 取消、Escape、pointercancel、窗口关闭和插件 unload 后不残留 capture、selection、indicator、highlight 或 listener
-- [ ] 文字选区菜单的 `-1/0/正整数` 设定互斥且可预测；正值菜单避让选区、半透明、hover 时不消失，窗口关闭或插件 unload 后不残留 observer、timer 或菜单 class
+- [ ] 文字选区菜单的 `-1/0/正数秒数（允许小数）` 设定互斥且可预测；正值菜单避让选区、半透明、hover 时不消失，窗口关闭或插件 unload 后不残留 observer、timer 或菜单 class
 
 ### 阶段 5：交付
 - [x] 更新 README 或使用说明

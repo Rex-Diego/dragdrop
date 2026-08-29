@@ -149,6 +149,12 @@ function clampSavedInteger(
   return Math.min(maximum, Math.max(minimum, Math.trunc(value)));
 }
 
+export function normalizeSelectionMenuAutoDismissSeconds(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
+  if (value < 0) return -1;
+  return Math.min(3_600, value);
+}
+
 function migrateSettings(loaded: LegacySettings): Partial<DragDropSettings> {
   const {
     protectedFolders,
@@ -308,12 +314,9 @@ export function mergeSettings(
       typeof loaded?.mobileBlockInteractions === "boolean"
         ? loaded.mobileBlockInteractions
         : DEFAULT_SETTINGS.mobileBlockInteractions,
-    selectionMenuAutoDismissSeconds: clampSavedInteger(
-      loaded?.selectionMenuAutoDismissSeconds,
-      DEFAULT_SETTINGS.selectionMenuAutoDismissSeconds,
-      -1,
-      3_600,
-    ),
+    selectionMenuAutoDismissSeconds:
+      normalizeSelectionMenuAutoDismissSeconds(loaded?.selectionMenuAutoDismissSeconds)
+      ?? DEFAULT_SETTINGS.selectionMenuAutoDismissSeconds,
     canvasBindings: {
       ...DEFAULT_SETTINGS.canvasBindings,
       ...loaded?.canvasBindings,

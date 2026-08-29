@@ -582,18 +582,31 @@
 
 ### 文字选区菜单收口决策（2026-08-16）
 
-- Surface 文字选区的长右键菜单与块抓手右键的 Copy/Cut/Delete 菜单是两条独立交互，不能复用 `blockTypeMenu` / `Block action menu` 设置。
-- 新增单一数值设定 `selectionMenuAutoDismissSeconds`：`-1` 完全不接管，保留 Obsidian 原生行为；`0` 阻止本次有非空文字选区的菜单显示；正整数显示菜单，并在鼠标未悬停该菜单时于指定秒数后关闭。悬停取消计时，离开后重新完整计时。
-- 只处理 Markdown 编辑器中的非空文字选区，在每个 owner document 的捕获阶段监听 `contextmenu`；不处理手柄、Canvas、设置页或其他插件的菜单。主窗口与 Popout 各自登记，所有 listener、MutationObserver 和 timer 由所属 `Component` 生命周期清理。
+- Surface/PDF 文字选区的长右键菜单与块抓手右键的 Copy/Cut/Delete 菜单是两条独立交互，不能复用 `blockTypeMenu` / `Block action menu` 设置。
+- 新增单一数值设定 `selectionMenuAutoDismissSeconds`：`-1` 完全不接管，保留 Obsidian 原生行为；`0` 阻止本次有非空文字选区的菜单显示；正数秒数（包括小数）显示菜单，并在鼠标未悬停该菜单时于指定秒数后关闭。悬停取消计时，离开后重新完整计时。
+- 处理 Markdown 编辑器和 PDF/PDF++ text layer 中的非空文字选区，在每个 owner document 的捕获阶段监听 `contextmenu`；PDF++ 还需要在 `pointerup` 捕获阶段预先建立观察器，因为它会在 pointerup 后异步创建 `.menu`。不处理手柄、Canvas、设置页或其他插件的菜单。主窗口与 Popout 各自登记，所有 listener、MutationObserver 和 timer 由所属 `Component` 生命周期清理。
 - 正值模式只标记本次由选区触发的 Obsidian 菜单，使用作用域化 class 调整半透明显示；定位以 Selection range 的 viewport rect 和 owner window 尺寸计算，优先避开选区下方/右侧，空间不足时回退上方/左侧。关闭仅关闭已标记的这一实例，绝不影响其他菜单。
-- 设置模型 schema 从 2 升到 3；保存时取整并 clamp 到 `-1..3600`，默认 3 秒。设置页使用明确中文/英文说明，不使用 Toggle。
+- 设置模型 schema 从 2 升到 3；默认 3 秒。设置页使用明确中文/英文说明，不使用 Toggle。后续修正保留正数小数秒数（如 `0.7`），超出最大值 clamp 到 `3600`，任意负数统一为 `-1`。
 
 ### 文字选区菜单实施结果（2026-08-16）
 
 - 新增纯 `selection-menu-model.ts`：把秒数解析为 native/hide/customize 三种状态，并按 24px 间隔计算选区右下、左下、右上或左上避让位置，最后 clamp 到 owner window viewport。
-- `SelectionMenuFeature` 是独立 child `Component`。正值时只在 Markdown 文字选区的 `contextmenu` 事件后，短暂观察同一 owner document 新增的 `.menu`；它不会修改块抓手菜单、Canvas 菜单、设置页或普通未选中文字的右键菜单。
+- `SelectionMenuFeature` 是独立 child `Component`。正值时接管 Markdown 文字选区 `contextmenu` 和 PDF/PDF++ text layer 选区的 `pointerup`/异步 `.menu`；它不会修改块抓手菜单、Canvas 菜单、设置页或普通未选中文字的右键菜单。
 - 被匹配的菜单获得唯一 `dragdrop-selection-menu` class，以 scoped CSS 应用半透明背景与 blur。计时器由 owner window 创建；pointer/focus 进入取消计时，离开重新完整计时，到期只移除该菜单 DOM 实例。每个 pending/active observer、animation frame、timer 和 child component 都在菜单关闭、window-close 或 plugin unload 时清理。
-- 自动化覆盖 schema 3、`-1/0/正数`、数值 clamp、英文/中文文案和四象限/超界定位。最终 lint、typecheck、21 files / 117 tests、production build、`node --check main.js` 均通过；实机仍需确认 Obsidian 当前版本实际使用的 selection-menu `.menu` DOM。
+- 自动化覆盖 schema 3、`-1/0/正数（含小数）`、数值 clamp、英文/中文文案和四象限/超界定位。最终 lint、typecheck、21 files / 117 tests、production build、`node --check main.js` 均通过；实机仍需确认 Obsidian 当前版本实际使用的 selection-menu `.menu` DOM。
+
+### 文字选区菜单小数秒数修正（2026-08-16）
+
+- 用户要求 `0.7` 秒可用。`selectionMenuAutoDismissSeconds` 不再经过整数化：旧设置加载、设置页输入解析和写回均保留有限正小数；设置页改为 `step=0.1`。
+- `-1` 继续表示不接管原生菜单，`0` 继续表示不显示选区菜单；任意负数保存时统一规范为 `-1`，避免出现语义相同但配置值不同的状态。
+- 计时器已有 `seconds * 1000` 路径，因此 `0.7` 会传入 `700` 毫秒，无需改变菜单生命周期或 owner-window 清理逻辑。
+
+### PDF/PDF++ 文字选区菜单修正（2026-08-29）
+
+- 用户反馈 PDF++ 选区菜单会在每次摘录后残留并堆积。根因是 PDF++ 在 text layer 的 `pointerup` 后约 80ms 才调用 `showContextMenu`，不一定经过普通 `contextmenu` 事件。
+- `SelectionMenuFeature` 现在优先识别 `.pdf-container`、`.pdf-viewer-container` 下的 `.textLayer`，在 `pointerup` 捕获阶段预先观察 owner document 的新 `.menu`，再复用现有半透明、避让定位、hover/focus 暂停和秒数自动关闭逻辑。
+- PDF 连续快速选区会保留短暂 pending observer，并在接管新菜单前移除上一实例，避免右键菜单不断残留。`-1` 保留 PDF++/Obsidian 原生行为，`0` 阻止该次选区菜单，正数（含 `0.7`）按设置秒数关闭。
+- 已完成 lint、typecheck、117 个测试、production build 和 `node --check main.js`；仍需在实际 Obsidian/PDF++ 窗口复核不同版本的 text layer 与弹出窗口行为。
 
 ### 0.1.2 发布（2026-08-16）
 

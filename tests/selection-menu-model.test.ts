@@ -9,6 +9,7 @@ describe("selection menu behavior", () => {
   it("keeps native behavior, hides, or customizes according to the timeout", () => {
     expect(selectionMenuBehavior(-1)).toBe("native");
     expect(selectionMenuBehavior(0)).toBe("hide");
+    expect(selectionMenuBehavior(0.7)).toBe("customize");
     expect(selectionMenuBehavior(3)).toBe("customize");
   });
 

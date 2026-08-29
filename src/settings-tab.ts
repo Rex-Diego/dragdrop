@@ -23,6 +23,7 @@ import {
 import {
   assignedModifierForAction,
   assignModifierToAction,
+  normalizeSelectionMenuAutoDismissSeconds,
   UNASSIGNED_MODIFIER,
   type BindingModifier,
   type DragDropSettings,
@@ -413,7 +414,7 @@ export class DragDropSettingTab extends PluginSettingTab {
               key: "selectionMenuAutoDismissSeconds",
               min: -1,
               max: 3_600,
-              step: 1,
+              step: 0.1,
             },
           },
         ],
@@ -535,7 +536,10 @@ export class DragDropSettingTab extends PluginSettingTab {
           text
             .setValue(typeof currentValue === "number" ? currentValue.toString() : (control.defaultValue ?? 0).toString())
             .onChange((value) => {
-              const parsed = Number.parseInt(value, 10);
+              const parsed = control.key === "selectionMenuAutoDismissSeconds"
+                ? Number(value)
+                : Number.parseInt(value, 10);
+              if (value.trim().length === 0) return;
               if (!Number.isFinite(parsed)) return;
               void this.writeControlValue(control.key, parsed);
             });
@@ -765,7 +769,7 @@ export class DragDropSettingTab extends PluginSettingTab {
         this.host.config.mobileBlockInteractions = value;
         break;
       case "selectionMenuAutoDismissSeconds": {
-        const normalized = clampInteger(value, -1, 3_600);
+        const normalized = normalizeSelectionMenuAutoDismissSeconds(value);
         if (normalized === undefined) return;
         this.host.config.selectionMenuAutoDismissSeconds = normalized;
         break;

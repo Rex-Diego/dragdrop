@@ -539,7 +539,7 @@
 
 - 用户确认继续执行。按 `AGENTS.md` 重新读取 `task_plan.md`、`findings.md`、`progress.md`、`planning-with-files-zh` 和仓库内 Obsidian 插件开发技能；本批按需要读取生命周期、CSS、UI/UX、无障碍与类型安全规范。
 - 当前 `HEAD` 为 `d85dc10`（`Release 0.1.1 drag-and-drop refinements`），工作树干净；本轮开始前未修改业务源码。
-- 新需求已纳入阶段 8.7：Surface 文字选区右键菜单采用独立的秒数设定，`-1` 保留原生、`0` 不显示、正整数显示半透明并避让选区的菜单，未 hover 时自动关闭；不改变块抓手的 Copy/Cut/Delete 菜单。
+- 新需求已纳入阶段 8.7：Surface 文字选区右键菜单采用独立的秒数设定，`-1` 保留原生、`0` 不显示、正数秒数显示半透明并避让选区的菜单，未 hover 时自动关闭；不改变块抓手的 Copy/Cut/Delete 菜单。
 - 下一步：审查设置模型、插件入口和 Obsidian 菜单挂接边界，先建立纯函数与生命周期测试，再接入运行时 feature。
 
 ### 本轮实施结果
@@ -567,3 +567,20 @@
 - 已创建并推送发布代码 commit `6790d52`（`Release 0.1.2 selection menu controls`）到 `codex/stage-8-dragger-integration`；GitHub tag `0.1.2` 指向该提交。
 - 已创建正式 GitHub Release `0.1.2`：`https://github.com/Rex-Diego/dragdrop/releases/tag/0.1.2`。核对结果为非 draft、非 prerelease，`main.js`（241,586 bytes）、`manifest.json`（235 bytes）与 `styles.css`（7,156 bytes）全部 uploaded，GitHub SHA-256 digest 与本地一致。
 - 初次远程预检和 push 都因本机 `127.0.0.1` 代理不可达失败。切换为仅对单次命令清除 proxy 环境变量及 Git `http.proxy`/`https.proxy` 覆盖后，直连预检、push、Release 创建和验证均成功；没有修改持久网络设置。
+
+## 会话：2026-08-16（文字选区菜单小数秒数修正）
+
+- 用户指出只支持整数秒不合理，并要求例如 `0.7` 秒后自动隐藏。已将 `selectionMenuAutoDismissSeconds` 改为专用小数规范化：有限正数原样保留，最大值为 `3600`；所有负数统一为 `-1`，`0` 仍为不显示菜单。
+- 设置页将该字段的 input step 改为 `0.1`，并且仅该字段通过 `Number()` 解析，避免影响其他本应保持整数的尺寸与速度设置。中英文说明和 README 明确写明可输入小数。
+- 回归覆盖 `0.7`、`2.8`、负小数和菜单行为；本轮 `npm.cmd run lint`、`npm.cmd run typecheck`、`npm.cmd run test`（21 files / 117 tests）、`npm.cmd run build` 和 `node --check main.js` 均通过。构建输出 `main.js` 已更新；尚未执行新的 Git commit、push 或 GitHub Release。
+- 一次并行最终审计在工具层异常超时，未产生写入；改为逐项执行 `node --check` 与 Git diff 审计后均成功，不把该工具故障视为代码或构建失败。
+- 已将新构建的 `main.js` 同步到 `C:\Users\rex18\project\canvasread-dev\.obsidian\plugins\dragdrop` 和 `C:\Users\rex18\project\canvasread-dev\.obsidian\plugins-dev\plugin`；两个目标与源码的 SHA-256 一致，未改动标准插件目录的 `data.json` 或另一目标的 `graph-worker.js`。
+
+## 会话：2026-08-29（PDF/PDF++ 文字选区菜单自动消失）
+
+- 用户反馈 PDF 阅读界面（尤其 PDF++）每次框选摘录后都会留下右键菜单，多个选区会堆积。已对照 `references/obsidian-pdf-plus/src/patchers/pdf-internals.ts` 与 `context-menu.ts`，确认 PDF++ 在 text layer `pointerup` 后异步约 80ms 创建 `.menu`，不保证触发普通 `contextmenu`。
+- `SelectionMenuFeature` 新增 PDF 目标识别（`.pdf-container`、`.pdf-viewer-container`、`.textLayer`），并在 owner document 的捕获阶段监听 `pointerup`。正值设置会提前建立 MutationObserver，接管 PDF++ 新建菜单后复用现有半透明、避让定位、hover/focus 暂停和小数秒自动关闭。
+- pending observer 在 PDF 连续快速选区期间短暂保留；每次接管新菜单前移除旧的已接管菜单，避免菜单残留。Markdown `contextmenu` 仍使用一次性观察；`-1` 不干预原生行为，`0` 阻止选区菜单。
+- 本轮验证：`npm.cmd run lint`、`npm.cmd run typecheck`、`npm.cmd run test`（21 files / 117 tests）、`npm.cmd run build`、`node --check main.js` 均通过。
+- 已将新 `main.js` 同步到标准插件目录和 `plugins-dev/plugin`，三方 SHA-256 一致，未覆盖目标目录中的用户数据。
+- 用户随后明确要求 commit、push 和 Release；本次发布版本升为 `0.1.3`，待质量检查完成后执行。

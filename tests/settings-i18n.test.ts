@@ -9,6 +9,7 @@ describe("settings localization", () => {
     expect(text.cancelDropAction).toBe("取消本次拖放");
     expect(text.selectionMenuTimeoutName).toBe("文字选区菜单自动消失秒数");
     expect(text.selectionMenuTimeoutDescription).toContain("-1");
+    expect(text.selectionMenuTimeoutDescription).toContain("0.7");
     expect(text.blockMenuDescription).not.toContain("转换");
   });
 
@@ -18,6 +19,7 @@ describe("settings localization", () => {
     expect(text.cancelDropAction).toBe("Cancel this drop");
     expect(text.sameMarkdownScope).toBe("Drop within the same Markdown file");
     expect(text.selectionMenuTimeoutName).toBe("Text selection menu timeout");
+    expect(text.selectionMenuTimeoutDescription).toContain("0.7");
     expect(text.blockMenuDescription).not.toContain("Convert");
   });
 });

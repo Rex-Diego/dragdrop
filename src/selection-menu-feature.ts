@@ -8,9 +8,16 @@ import type { DragDropSettings } from "./settings-model";
 
 const MENU_SELECTOR = ".menu";
 const MARKDOWN_VIEW_SELECTOR = ".markdown-source-view, .markdown-preview-view";
+const PDF_VIEW_SELECTOR = ".pdf-container, .pdf-viewer-container";
+const PDF_TEXT_LAYER_SELECTOR = ".pdf-container .textLayer, .pdf-viewer-container .textLayer";
 const SELECTION_MENU_CLASS = "dragdrop-selection-menu";
 const PENDING_MENU_TIMEOUT_MS = 250;
 type OwnerWindow = Window & { MutationObserver: typeof MutationObserver };
+
+interface SelectionMenuTarget {
+  container: Element;
+  isPdf: boolean;
+}
 
 interface SelectionMenuFeatureHost {
   app: App;
@@ -21,6 +28,7 @@ interface PendingSelectionMenu {
   knownMenus: Set<HTMLElement>;
   selectionRect: SelectionMenuRect;
   dismissSeconds: number;
+  retainAfterActivation: boolean;
 }
 
 interface ActiveSelectionMenu {
@@ -78,19 +86,42 @@ function elementForNode(node: Node | null): Element | null {
   return node.nodeType === 1 ? (node as Element) : node.parentElement;
 }
 
+function selectionMenuTargetForElement(target: Element): SelectionMenuTarget | null {
+  const pdfTextLayer = target.closest(PDF_TEXT_LAYER_SELECTOR);
+  if (pdfTextLayer) {
+    return {
+      container: pdfTextLayer.closest(PDF_VIEW_SELECTOR) ?? pdfTextLayer,
+      isPdf: true,
+    };
+  }
+
+  const markdownView = target.closest(MARKDOWN_VIEW_SELECTOR);
+  if (markdownView) return { container: markdownView, isPdf: false };
+  return null;
+}
+
 function selectionRectForTarget(
   ownerDocument: Document,
   target: Element,
 ): SelectionMenuRect | null {
-  const markdownView = target.closest(MARKDOWN_VIEW_SELECTOR);
-  if (!markdownView) return null;
+  const selectionTarget = selectionMenuTargetForElement(target);
+  if (!selectionTarget) return null;
 
   const selection = ownerDocument.getSelection();
   if (!selection || selection.rangeCount === 0 || selection.isCollapsed) return null;
   if (selection.toString().trim().length === 0) return null;
 
-  const selectionElement = elementForNode(selection.anchorNode);
-  if (!selectionElement || !markdownView.contains(selectionElement)) return null;
+  const anchorElement = elementForNode(selection.anchorNode);
+  if (!anchorElement || !selectionTarget.container.contains(anchorElement)) return null;
+  if (selectionTarget.isPdf) {
+    const focusElement = elementForNode(selection.focusNode);
+    if (
+      !focusElement
+      || !selectionTarget.container.contains(focusElement)
+      || !anchorElement.closest(PDF_TEXT_LAYER_SELECTOR)
+      || !focusElement.closest(PDF_TEXT_LAYER_SELECTOR)
+    ) return null;
+  }
 
   const rect = selection.getRangeAt(0).getBoundingClientRect();
   if (
@@ -174,6 +205,9 @@ export class SelectionMenuFeature extends Component {
     component.registerDomEvent(ownerDocument, "contextmenu", (event) => {
       this.handleContextMenu(state, event);
     }, true);
+    component.registerDomEvent(ownerDocument, "pointerup", (event) => {
+      this.handlePointerUp(state, event);
+    }, true);
   }
 
   private unregisterDocument(ownerDocument: Document): void {
@@ -190,35 +224,70 @@ export class SelectionMenuFeature extends Component {
     if (event.defaultPrevented) return;
     const target = elementFromEventTarget(event.target);
     if (!target) return;
+    const selectionTarget = selectionMenuTargetForElement(target);
+    if (!selectionTarget) return;
     const selectionRect = selectionRectForTarget(state.ownerDocument, target);
     if (!selectionRect) return;
 
+    this.armSelectionMenu(state, selectionRect, event, selectionTarget.isPdf);
+  }
+
+  private handlePointerUp(state: DocumentState, event: PointerEvent): void {
+    if (event.defaultPrevented) return;
+    const target = elementFromEventTarget(event.target);
+    if (!target || !target.closest(PDF_TEXT_LAYER_SELECTOR)) return;
+    const selectionRect = selectionRectForTarget(state.ownerDocument, target);
+    if (!selectionRect) return;
+
+    // PDF++ creates its custom menu asynchronously from pointerup, so arm the
+    // observer before its bubbling listener schedules that menu.
+    this.armSelectionMenu(state, selectionRect, event, true);
+  }
+
+  private armSelectionMenu(
+    state: DocumentState,
+    selectionRect: SelectionMenuRect,
+    event: MouseEvent,
+    retainAfterActivation: boolean,
+  ): void {
     const behavior = selectionMenuBehavior(this.host.config.selectionMenuAutoDismissSeconds);
     if (behavior === "native") return;
     if (behavior === "hide") {
       event.preventDefault();
       event.stopImmediatePropagation();
       this.clearPendingMenu(state);
+      this.clearActiveMenu(state, undefined, true);
       return;
     }
 
-    this.clearPendingMenu(state);
-    this.clearActiveMenu(state);
+    this.clearActiveMenu(state, undefined, true);
+    const knownMenus = new Set(
+      Array.from(state.ownerDocument.querySelectorAll<HTMLElement>(MENU_SELECTOR)),
+    );
+    if (state.pending) {
+      for (const menu of knownMenus) state.pending.knownMenus.add(menu);
+      state.pending.selectionRect = selectionRect;
+      state.pending.dismissSeconds = this.host.config.selectionMenuAutoDismissSeconds;
+      state.pending.retainAfterActivation ||= retainAfterActivation;
+    } else {
+      state.pending = {
+        knownMenus,
+        selectionRect,
+        dismissSeconds: this.host.config.selectionMenuAutoDismissSeconds,
+        retainAfterActivation,
+      };
+    }
+
     const targetRoot = state.ownerDocument.body ?? state.ownerDocument.documentElement;
     if (!targetRoot) return;
-
-    state.pending = {
-      knownMenus: new Set(
-        Array.from(state.ownerDocument.querySelectorAll<HTMLElement>(MENU_SELECTOR)),
-      ),
-      selectionRect,
-      dismissSeconds: this.host.config.selectionMenuAutoDismissSeconds,
-    };
-    const observer = new state.ownerWindow.MutationObserver(() => {
-      this.activatePendingMenu(state);
-    });
-    state.pendingObserver = observer;
-    observer.observe(targetRoot, { childList: true, subtree: true });
+    if (!state.pendingObserver) {
+      const observer = new state.ownerWindow.MutationObserver(() => {
+        this.activatePendingMenu(state);
+      });
+      state.pendingObserver = observer;
+      observer.observe(targetRoot, { childList: true, subtree: true });
+    }
+    if (state.pendingTimer !== null) state.ownerWindow.clearTimeout(state.pendingTimer);
     state.pendingTimer = state.ownerWindow.setTimeout(() => {
       this.clearPendingMenu(state);
     }, PENDING_MENU_TIMEOUT_MS);
@@ -232,7 +301,9 @@ export class SelectionMenuFeature extends Component {
       .find((candidate) => !pending.knownMenus.has(candidate));
     if (!menu) return;
 
-    this.clearPendingMenu(state);
+    pending.knownMenus.add(menu);
+    if (!pending.retainAfterActivation) this.clearPendingMenu(state);
+    this.clearActiveMenu(state, undefined, true);
     menu.classList.add(SELECTION_MENU_CLASS);
     const component = new Component();
     let active: ActiveSelectionMenu | null = null;
