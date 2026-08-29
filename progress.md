@@ -594,9 +594,10 @@
 - 已通过 `npm.cmd run lint`、`npm.cmd run typecheck`、`npm.cmd run test`（21 files / 118 tests）、`npm.cmd run build` 和 `node --check main.js`；ESLint 无 warning。
 - 已将构建后的 `main.js` 与 README 同步到标准插件目录和 `plugins-dev/plugin`；源码、两个目标目录的 SHA-256 一致，未覆盖 `data.json` 等用户资产。Surface 实机复测仍保留为待验收项。
 
-### 0.1.4 提交、推送与 Release（进行中）
+### 0.1.4 提交、推送与 Release
 
 - 发布版本已统一升级为 `0.1.4`：`manifest.json`、`package.json`、`package-lock.json` 和 `versions.json` 均已同步，最低 Obsidian 版本仍为 `1.5.11`。
 - 发布前质量链路已通过：`npm.cmd run lint`、`npm.cmd run typecheck`、`npm.cmd run test`（21 files / 118 tests）、`npm.cmd run build`、`node --check main.js` 和 `git diff --check`。
 - 构建后的六个交付文件已同步到 `.obsidian/plugins/dragdrop` 与 `plugins-dev/plugin`，三方 SHA-256 一致；两个目标目录中的用户资产未被覆盖。
-- 待完成：创建发布 commit、推送当前分支、创建并核验 GitHub Release `0.1.4`。
+- 已创建并推送发布代码 commit `387edb0`（`Release 0.1.4 Surface Pen Canvas controls`）到 `codex/stage-8-dragger-integration`；GitHub tag `0.1.4` 指向该提交。
+- 已创建正式 GitHub Release `0.1.4`：`https://github.com/Rex-Diego/dragdrop/releases/tag/0.1.4`。核对为非 draft、非 prerelease，`main.js`（244,992 bytes）、`manifest.json`（235 bytes）和 `styles.css`（7,156 bytes）均为 uploaded，GitHub SHA-256 与本地构建逐项一致。

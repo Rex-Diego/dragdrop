@@ -615,6 +615,11 @@
 - 该改动只调整 Canvas 的 `PointerEvent -> synthetic PointerEvent/MouseEvent` 输入适配；Markdown 抓手侧键拖拽、鼠标 HTML5/DataTransfer、跨弹窗和已有 Canvas drop/写入路径不变。
 - 侧键设置只门控破坏原生右键语义的侧键接管；无侧键笔尖的 Canvas 平移不受该开关影响。
 
+### 0.1.4 发布（2026-08-29）
+
+- 用户授权后，发布代码以 commit `387edb0` 推送至 `codex/stage-8-dragger-integration`，GitHub tag `0.1.4` 直接指向该提交。
+- 正式 Release 为 `https://github.com/Rex-Diego/dragdrop/releases/tag/0.1.4`，不是 draft 或 prerelease，包含 `main.js`、`manifest.json` 和 `styles.css`；三个 GitHub SHA-256 digest 与本地构建逐项一致。
+
 ### 0.1.2 发布（2026-08-16）
 
 - 用户授权后，发布代码以 commit `6790d52` 推送至 `codex/stage-8-dragger-integration`，GitHub tag `0.1.2` 指向该提交，正式 Release 为 `https://github.com/Rex-Diego/dragdrop/releases/tag/0.1.2`。
