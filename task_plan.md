@@ -79,6 +79,7 @@
 - [x] 将设置页修饰键 UI 改为“按动作选择修饰键”，保留旧 `canvasBindings` / `markdownBindings` 存储并自动处理组合冲突
 - [x] 增加 Surface Pen 侧键拖拽开关，使用 `pen + buttons&2` 进入 Markdown 与 Canvas 的 Pointer capture 拖拽链路；Canvas 同时桥接左键 Pointer/Mouse 事件并抑制原始右键事件
 - [x] 修复 Surface Pen Canvas 事件桥：补齐合成事件 `view`、Window 捕获和卡片/空白 Canvas 目标路由
+- [x] 调整 Surface Pen Canvas 映射：无侧键笔尖平移整个画布，按住侧键模拟左键选中卡片或画布
 - [x] 增加 `Larger touch handles` 设置开关，默认保留 44×44 触控抓手并支持运行时切换
 - [x] 增加 Canvas 浮动工具栏原子笔记按钮的设置开关，默认显示并支持运行时切换
 - [ ] 完成设置页与 Surface Pen 侧键的 Obsidian 实机验证
@@ -173,7 +174,7 @@
 - [x] 补纯模型、事件仲裁、CodeMirror adapter、事务 rollback、设置迁移和生命周期测试；移植测试同样履行 MIT 归属
 - [x] 依次通过 `npm.cmd run lint`、`npm.cmd run typecheck`、`npm.cmd run test`、`npm.cmd run build` 和 `node --check main.js`，warnings 必须为 0
 - [x] 更新 README：动作默认值、结构重排、多选、块菜单、跨文件目标、移动端限制、设置迁移、第三方致谢和已知私有 API 风险
-- [x] 每个稳定批次先完成自动化验证，再部署到 `.obsidian/plugins/dragdrop` 与 `plugins-dev/plugin` 并核对 SHA-256；已在用户授权后将已验证构建推送到公开 GitHub 仓库并发布 `0.1.2` BRAT Release
+- [x] 每个稳定批次先完成自动化验证，再部署到 `.obsidian/plugins/dragdrop` 与 `plugins-dev/plugin` 并核对 SHA-256；已在用户授权后将已验证构建推送到公开 GitHub 仓库并发布历史版本 `0.1.2`、`0.1.3`
 - [ ] 分批 Obsidian 实机验收：先 8.1，再 8.2–8.4，最后 8.5–8.6；每批失败先修复，不把未验收功能并入下一批
 - **状态：** in_progress；8.0、8.1、8.2、8.3 已完成，8.4 已完成文件目标/同文件双视图/单源 rollback 首批，8.5 已完成首批视觉与折叠能力；多源事务、完整无障碍/移动端仍待补齐
 

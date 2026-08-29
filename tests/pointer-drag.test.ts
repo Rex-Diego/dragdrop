@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   canvasPenButtonForInteraction,
   canvasPenButtonsForButton,
+  canvasPenInteractionForEvent,
   createCanvasPointerEventInit,
   hasCrossedPointerDragThreshold,
   isSurfacePenSideButton,
@@ -33,11 +34,20 @@ describe("pointer drag threshold", () => {
     expect(isSurfacePenSideButton({ pointerType: "mouse", buttons: 2 })).toBe(false);
   });
 
-  it("uses primary input for nodes and auxiliary input for canvas panning", () => {
-    expect(canvasPenButtonForInteraction("node")).toBe(0);
+  it("uses primary input for side-button selection and auxiliary input for pen panning", () => {
+    expect(canvasPenButtonForInteraction("select")).toBe(0);
     expect(canvasPenButtonForInteraction("pan")).toBe(1);
     expect(canvasPenButtonsForButton(0)).toBe(1);
     expect(canvasPenButtonsForButton(1)).toBe(4);
+  });
+
+  it("maps the side button to selection and the pen tip to Canvas panning", () => {
+    expect(canvasPenInteractionForEvent({ pointerType: "pen", buttons: 2 })).toBe("select");
+    expect(canvasPenInteractionForEvent({ pointerType: "pen", buttons: 3 })).toBe("select");
+    expect(canvasPenInteractionForEvent({ pointerType: "pen", buttons: 1 })).toBe("pan");
+    expect(canvasPenInteractionForEvent({ pointerType: "pen", buttons: 4 })).toBeNull();
+    expect(canvasPenInteractionForEvent({ pointerType: "pen", buttons: 0 })).toBeNull();
+    expect(canvasPenInteractionForEvent({ pointerType: "mouse", buttons: 1 })).toBeNull();
   });
 
   it("keeps the owner window on synthetic Canvas pointer events", () => {

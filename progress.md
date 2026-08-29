@@ -585,3 +585,18 @@
 - 已将新 `main.js` 同步到标准插件目录和 `plugins-dev/plugin`，三方 SHA-256 一致，未覆盖目标目录中的用户数据。
 - 用户随后明确要求 commit、push 和 Release；本次发布版本升为 `0.1.3`，待质量检查完成后执行。
 - `0.1.3` 已完成提交、推送和正式 GitHub Release：提交 `4a659f9` 已推送至 `codex/stage-8-dragger-integration`，tag `0.1.3` 指向该提交；Release 附件包含 `main.js`、`manifest.json` 和 `styles.css`，均已上传并通过 SHA-256 核对。
+
+## 会话：2026-08-29（Surface Pen Canvas 平移与选中映射）
+
+- 用户要求调整 Surface Pen 在 Canvas 的操控：按住侧键时等同鼠标左键选中；无侧键笔尖滑动时平移整个画布。
+- 只读审查确认现有桥接只拦截侧键，并按“节点左键 / 空白中键”分流，正好导致侧键空白平移、无侧键笔尖无效。下一步将扩展同一 owner-window Pointer capture 桥接为“侧键左键 / 无侧键中键”，补纯函数回归并运行 lint、typecheck、build。
+- 已将 Canvas Pen 映射改为：无侧键笔尖在卡片或空白处均桥接中键平移；侧键桥接左键选择/框选，并仅在 `Surface Pen side-button drag` 开启时接管。README、英文/中文设置说明和 pointer 映射测试已同步。
+- 已通过 `npm.cmd run lint`、`npm.cmd run typecheck`、`npm.cmd run test`（21 files / 118 tests）、`npm.cmd run build` 和 `node --check main.js`；ESLint 无 warning。
+- 已将构建后的 `main.js` 与 README 同步到标准插件目录和 `plugins-dev/plugin`；源码、两个目标目录的 SHA-256 一致，未覆盖 `data.json` 等用户资产。Surface 实机复测仍保留为待验收项。
+
+### 0.1.4 提交、推送与 Release（进行中）
+
+- 发布版本已统一升级为 `0.1.4`：`manifest.json`、`package.json`、`package-lock.json` 和 `versions.json` 均已同步，最低 Obsidian 版本仍为 `1.5.11`。
+- 发布前质量链路已通过：`npm.cmd run lint`、`npm.cmd run typecheck`、`npm.cmd run test`（21 files / 118 tests）、`npm.cmd run build`、`node --check main.js` 和 `git diff --check`。
+- 构建后的六个交付文件已同步到 `.obsidian/plugins/dragdrop` 与 `plugins-dev/plugin`，三方 SHA-256 一致；两个目标目录中的用户资产未被覆盖。
+- 待完成：创建发布 commit、推送当前分支、创建并核验 GitHub Release `0.1.4`。

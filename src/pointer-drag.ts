@@ -19,10 +19,18 @@ export function isSurfacePenSideButton(
   return event.pointerType === "pen" && (event.buttons & 2) !== 0;
 }
 
-export type CanvasPenInteraction = "node" | "pan";
+export type CanvasPenInteraction = "select" | "pan";
 
 export function canvasPenButtonForInteraction(interaction: CanvasPenInteraction): 0 | 1 {
   return interaction === "pan" ? 1 : 0;
+}
+
+export function canvasPenInteractionForEvent(
+  event: Pick<PointerEvent, "pointerType" | "buttons">,
+): CanvasPenInteraction | null {
+  if (event.pointerType !== "pen") return null;
+  if (isSurfacePenSideButton(event)) return "select";
+  return (event.buttons & 1) !== 0 ? "pan" : null;
 }
 
 export function canvasPenButtonsForButton(button: 0 | 1): 1 | 4 {

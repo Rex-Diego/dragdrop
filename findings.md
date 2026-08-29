@@ -608,6 +608,13 @@
 - PDF 连续快速选区会保留短暂 pending observer，并在接管新菜单前移除上一实例，避免右键菜单不断残留。`-1` 保留 PDF++/Obsidian 原生行为，`0` 阻止该次选区菜单，正数（含 `0.7`）按设置秒数关闭。
 - 已完成 lint、typecheck、117 个测试、production build 和 `node --check main.js`；仍需在实际 Obsidian/PDF++ 窗口复核不同版本的 text layer 与弹出窗口行为。
 
+### Surface Pen Canvas 操控映射（2026-08-29）
+
+- 现有 Canvas 桥接只在 `pen + buttons&2` 时介入，并按落点把卡片转为左键、空白 Canvas 转为中键；因此侧键在空白处会平移，而无侧键笔尖不会进入 Canvas 兼容桥接。
+- 本轮锁定用户要求的输入语义：Canvas 中无侧键笔尖始终桥接为中键平移，按住侧键始终桥接为左键选择；侧键命中卡片时派发到卡片容器，命中空白时派发到 Canvas wrapper，以保持原生左键选择/框选。
+- 该改动只调整 Canvas 的 `PointerEvent -> synthetic PointerEvent/MouseEvent` 输入适配；Markdown 抓手侧键拖拽、鼠标 HTML5/DataTransfer、跨弹窗和已有 Canvas drop/写入路径不变。
+- 侧键设置只门控破坏原生右键语义的侧键接管；无侧键笔尖的 Canvas 平移不受该开关影响。
+
 ### 0.1.2 发布（2026-08-16）
 
 - 用户授权后，发布代码以 commit `6790d52` 推送至 `codex/stage-8-dragger-integration`，GitHub tag `0.1.2` 指向该提交，正式 Release 为 `https://github.com/Rex-Diego/dragdrop/releases/tag/0.1.2`。

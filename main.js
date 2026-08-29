@@ -1881,6 +1881,11 @@ function isSurfacePenSideButton(event) {
 function canvasPenButtonForInteraction(interaction) {
   return interaction === "pan" ? 1 : 0;
 }
+function canvasPenInteractionForEvent(event) {
+  if (event.pointerType !== "pen") return null;
+  if (isSurfacePenSideButton(event)) return "select";
+  return (event.buttons & 1) !== 0 ? "pan" : null;
+}
 function canvasPenButtonsForButton(button) {
   return button === 1 ? 4 : 1;
 }
@@ -2662,11 +2667,12 @@ var DragSessionManager = class extends import_obsidian6.Component {
   }
   handleCanvasPenPointerDown(event) {
     if (this.syntheticCanvasEvents.has(event)) return;
-    if (!this.host.config.surfacePenSideButtonDrag || !isSurfacePenSideButton(event)) return;
+    const interactionType = canvasPenInteractionForEvent(event);
+    if (!interactionType || interactionType === "select" && !this.host.config.surfacePenSideButtonDrag) return;
     if (this.canvasPenDrag || this.pointerDrag) return;
     const target = this.elementFromEventTarget(event.target);
     if (!target) return;
-    const interaction = this.findCanvasPenInteraction(target);
+    const interaction = this.findCanvasPenInteraction(target, interactionType);
     if (!interaction || !this.beginCanvasPenDrag(event, interaction)) return;
     event.preventDefault();
     event.stopImmediatePropagation();
@@ -2674,11 +2680,12 @@ var DragSessionManager = class extends import_obsidian6.Component {
   handleCanvasPenPointerMove(event) {
     if (this.syntheticCanvasEvents.has(event)) return;
     if (!this.canvasPenDrag) {
-      if (!this.host.config.surfacePenSideButtonDrag || !isSurfacePenSideButton(event)) return;
+      const interactionType = canvasPenInteractionForEvent(event);
+      if (!interactionType || interactionType === "select" && !this.host.config.surfacePenSideButtonDrag) return;
       if (this.pointerDrag) return;
       const target = this.elementFromEventTarget(event.target);
       if (!target) return;
-      const interaction = this.findCanvasPenInteraction(target);
+      const interaction = this.findCanvasPenInteraction(target, interactionType);
       if (!interaction || !this.beginCanvasPenDrag(event, interaction)) return;
     }
     const drag = this.canvasPenDrag;
@@ -2700,10 +2707,12 @@ var DragSessionManager = class extends import_obsidian6.Component {
     event.preventDefault();
     event.stopImmediatePropagation();
     this.dispatchCanvasPointerEvent("pointerup", event, drag.dispatchTarget, 0, drag.button);
-    this.canvasPenContextMenuSuppression = {
-      ownerDocument: drag.dispatchTarget.ownerDocument,
-      expiresAt: Date.now() + 1e3
-    };
+    if (drag.suppressContextMenu) {
+      this.canvasPenContextMenuSuppression = {
+        ownerDocument: drag.dispatchTarget.ownerDocument,
+        expiresAt: Date.now() + 1e3
+      };
+    }
     this.clearCanvasPenDrag();
   }
   handleCanvasPenPointerCancel(event) {
@@ -2718,7 +2727,7 @@ var DragSessionManager = class extends import_obsidian6.Component {
   handleCanvasPenMouseDown(event) {
     if (this.syntheticCanvasEvents.has(event)) return;
     const drag = this.canvasPenDrag;
-    if (!drag || event.button !== 2 || !this.isSameEventDocument(event, drag.dispatchTarget.ownerDocument)) {
+    if (!drag || !this.isSameEventDocument(event, drag.dispatchTarget.ownerDocument)) {
       return;
     }
     event.preventDefault();
@@ -2759,7 +2768,8 @@ var DragSessionManager = class extends import_obsidian6.Component {
       pointerId: event.pointerId,
       dispatchTarget: interaction.dispatchTarget,
       captureTarget,
-      button: interaction.button
+      button: interaction.button,
+      suppressContextMenu: isSurfacePenSideButton(event)
     };
     try {
       captureTarget.setPointerCapture(event.pointerId);
@@ -2830,28 +2840,27 @@ var DragSessionManager = class extends import_obsidian6.Component {
     if (!isNodeLike2(target)) return null;
     return isElementNode(target) ? target : target.parentElement;
   }
-  findCanvasPenInteraction(element) {
+  findCanvasPenInteraction(element, interactionType) {
     let result = null;
     this.host.app.workspace.iterateAllLeaves((leaf) => {
       if (result || !isCanvasView(leaf.view)) return;
       const view = leaf.view;
-      if (view.containerEl.ownerDocument === element.ownerDocument && view.containerEl.isConnected && view.containerEl.contains(element) && view.canvas.readonly !== true) {
+      if (view.containerEl.ownerDocument === element.ownerDocument && view.containerEl.isConnected && view.containerEl.contains(element)) {
         if (this.isCanvasControl(element)) return;
-        const nodeTarget = this.findCanvasNodeTarget(view, element);
+        const wrapper = this.findCanvasWrapper(view);
+        if (!wrapper?.contains(element)) return;
+        const nodeTarget = interactionType === "select" ? this.findCanvasNodeTarget(view, element) : null;
         if (nodeTarget) {
           result = {
             dispatchTarget: nodeTarget,
-            button: canvasPenButtonForInteraction("node")
+            button: canvasPenButtonForInteraction(interactionType)
           };
           return;
         }
-        const wrapper = this.findCanvasWrapper(view);
-        if (wrapper?.contains(element)) {
-          result = {
-            dispatchTarget: wrapper,
-            button: canvasPenButtonForInteraction("pan")
-          };
-        }
+        result = {
+          dispatchTarget: wrapper,
+          button: canvasPenButtonForInteraction(interactionType)
+        };
       }
     });
     return result;
@@ -5420,7 +5429,7 @@ var EN_SETTINGS_TEXT = {
   touchDropActionName: "Touch drop action",
   touchDropActionDescription: "Action used for finger or pen drops when no keyboard modifier is available.",
   surfacePenName: "Surface Pen side-button drag",
-  surfacePenDescription: "Treat the Surface Pen side button as a normal drag when pressed on a Markdown handle.",
+  surfacePenDescription: "Use the Surface Pen side button to drag Markdown handles and select on Canvas. Without the side button, the pen pans Canvas regardless of this setting.",
   largerTouchHandlesName: "Larger touch handles",
   largerTouchHandlesDescription: "Use 44 x 44 touch targets for Markdown handles on touch-oriented devices.",
   mobileInteractionsName: "Mobile block selection",
@@ -5514,7 +5523,7 @@ var ZH_SETTINGS_TEXT = {
   touchDropActionName: "\u89E6\u63A7\u62D6\u653E\u52A8\u4F5C",
   touchDropActionDescription: "\u624B\u6307\u6216\u624B\u5199\u7B14\u65E0\u6CD5\u4F7F\u7528\u952E\u76D8\u4FEE\u9970\u952E\u65F6\u6267\u884C\u7684\u52A8\u4F5C\u3002",
   surfacePenName: "Surface Pen \u4FA7\u952E\u62D6\u62FD",
-  surfacePenDescription: "\u5728 Markdown \u6293\u624B\u4E0A\u6309\u4F4F Surface Pen \u4FA7\u952E\u65F6\uFF0C\u5C06\u5176\u4F5C\u4E3A\u666E\u901A\u62D6\u62FD\u5904\u7406\u3002",
+  surfacePenDescription: "\u5728 Markdown \u6293\u624B\u4E0A\u6309\u4F4F Surface Pen \u4FA7\u952E\u65F6\u6B63\u5E38\u62D6\u62FD\uFF1B\u5728 Canvas \u4E0A\u6309\u4F4F\u4FA7\u952E\u65F6\u9009\u4E2D\uFF0C\u672A\u6309\u4FA7\u952E\u65F6\u7B14\u5C16\u59CB\u7EC8\u5E73\u79FB\u753B\u5E03\u3002",
   largerTouchHandlesName: "\u52A0\u5927\u89E6\u63A7\u6293\u624B",
   largerTouchHandlesDescription: "\u5728\u89E6\u63A7\u8BBE\u5907\u4E0A\u4E3A Markdown \u6293\u624B\u4F7F\u7528 44 \xD7 44 \u7684\u89E6\u63A7\u533A\u57DF\u3002",
   mobileInteractionsName: "\u79FB\u52A8\u7AEF\u591A\u5757\u9009\u62E9",
