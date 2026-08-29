@@ -584,3 +584,4 @@
 - 本轮验证：`npm.cmd run lint`、`npm.cmd run typecheck`、`npm.cmd run test`（21 files / 117 tests）、`npm.cmd run build`、`node --check main.js` 均通过。
 - 已将新 `main.js` 同步到标准插件目录和 `plugins-dev/plugin`，三方 SHA-256 一致，未覆盖目标目录中的用户数据。
 - 用户随后明确要求 commit、push 和 Release；本次发布版本升为 `0.1.3`，待质量检查完成后执行。
+- `0.1.3` 已完成提交、推送和正式 GitHub Release：提交 `4a659f9` 已推送至 `codex/stage-8-dragger-integration`，tag `0.1.3` 指向该提交；Release 附件包含 `main.js`、`manifest.json` 和 `styles.css`，均已上传并通过 SHA-256 核对。
