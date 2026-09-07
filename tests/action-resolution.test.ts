@@ -193,7 +193,7 @@ describe("Markdown action resolution", () => {
     expect(
       resolveMarkdownDropAction(
         { ctrlKey: true, metaKey: false, shiftKey: false, altKey: false },
-        { none: "inherit", primary: "link-source" },
+        { none: "inherit", primary: "invalid-action" },
       ),
     ).toBe("embed-source");
   });

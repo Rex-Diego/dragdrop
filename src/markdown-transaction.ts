@@ -6,6 +6,7 @@ export interface MarkdownMutation {
 
 export interface MarkdownTransactionAdapter {
   apply(mutation: MarkdownMutation): Promise<void> | void;
+  /** Must also handle an attempted write that failed before changing content. */
   rollback(mutation: MarkdownMutation): Promise<void> | void;
 }
 
@@ -40,8 +41,8 @@ export async function runMarkdownTransaction(
   try {
     for (const mutation of mutations) {
       if (mutation.before === mutation.after) continue;
-      await adapter.apply(mutation);
       applied.push(mutation);
+      await adapter.apply(mutation);
     }
     return { ok: true, rollbackFailed: false };
   } catch (error) {
@@ -51,6 +52,9 @@ export async function runMarkdownTransaction(
         await adapter.rollback(mutation);
       } catch {
         rollbackFailed = true;
+        // If restoring a deleted source fails, keep the already-inserted
+        // destination copy instead of risking loss of both copies.
+        break;
       }
     }
     return { ok: false, error, rollbackFailed };

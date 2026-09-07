@@ -56,6 +56,16 @@ describe("Markdown structural move planning", () => {
     ).toBe("- source\n  - child");
   });
 
+  it("keeps lazy continuation lines with a nested task subtree", () => {
+    expect(
+      adjustListBlockIndent(
+        "  - [ ] source\ncontinued\n    - child",
+        "  - target",
+        { mode: "child", contextLineNumber: 1, targetIndentWidth: 4 },
+      ),
+    ).toBe("    - [ ] source\n  continued\n      - child");
+  });
+
   it("rejects self-range drops and dangerous container interiors", () => {
     expect(findMoveTargetIssue("Alpha\nBravo", [{ from: 0, to: 5 }], 3)).toBe(
       "inside-source",

@@ -11,6 +11,8 @@ describe("settings localization", () => {
     expect(text.selectionMenuTimeoutDescription).toContain("-1");
     expect(text.selectionMenuTimeoutDescription).toContain("0.7");
     expect(text.blockMenuDescription).not.toContain("转换");
+    expect(text.crossMarkdownEmbedAliasDescription).toContain("[[");
+    expect(text.crossMarkdownEmbedAliasDescription).not.toContain("![[");
   });
 
   it("falls back to clear English labels", () => {
@@ -21,5 +23,7 @@ describe("settings localization", () => {
     expect(text.selectionMenuTimeoutName).toBe("Text selection menu timeout");
     expect(text.selectionMenuTimeoutDescription).toContain("0.7");
     expect(text.blockMenuDescription).not.toContain("Convert");
+    expect(text.crossMarkdownEmbedAliasDescription).toContain("[[");
+    expect(text.crossMarkdownEmbedAliasDescription).not.toContain("![[");
   });
 });

@@ -46,9 +46,13 @@ export interface CanvasTextNode extends CanvasNode {
 
 export interface ObsidianCanvas {
   readonly?: boolean;
+  config?: { minContainerDimension?: number };
   nodes: Map<string, CanvasNode>;
   selection: Set<CanvasNode>;
   updateSelection?(callback: () => void): void;
+  nodeInteractionLayer?: {
+    render?(): void;
+  };
   posFromEvt(event: MouseEvent): CanvasPoint;
   createFileNode(config: {
     file: TFile;

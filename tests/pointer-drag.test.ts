@@ -5,9 +5,11 @@ import {
   canvasPenInteractionForEvent,
   createCanvasPointerEventInit,
   hasCrossedPointerDragThreshold,
+  isCanvasNativeControlElement,
   isPointInsidePointerRect,
   isSurfacePenSideButton,
   matchesPointerDrag,
+  shouldStartMobileBlockSelection,
   TOUCH_DRAG_THRESHOLD,
 } from "../src/pointer-drag";
 
@@ -75,6 +77,20 @@ describe("pointer drag threshold", () => {
     expect(init.isPrimary).toBe(true);
     expect(init.button).toBe(0);
     expect(init.buttons).toBe(1);
+  });
+
+  it("does not let the pen enter the optional touch long-press selection mode", () => {
+    expect(shouldStartMobileBlockSelection("touch")).toBe(true);
+    expect(shouldStartMobileBlockSelection("pen")).toBe(false);
+    expect(shouldStartMobileBlockSelection("mouse")).toBe(false);
+  });
+
+  it("keeps Canvas resize handles in the native control allowlist", () => {
+    const resizeHandle = {
+      closest: (selector: string) =>
+        selector.includes(".canvas-node-resizer") ? {} as Element : null,
+    };
+    expect(isCanvasNativeControlElement(resizeHandle)).toBe(true);
   });
 
   it("recognizes only visible connection and edge hit rectangles", () => {

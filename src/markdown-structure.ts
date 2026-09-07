@@ -140,8 +140,10 @@ export function adjustListBlockIndent(
       if (line.trim().length === 0) return line;
       const leading = line.match(/^[ \t]*/)?.[0] ?? "";
       const currentWidth = indentWidth(leading);
-      if (currentWidth < sourceList.indentWidth) return line;
-      const adjusted = buildIndent(unitSample, currentWidth + delta);
+      // A list item's lazy continuation can have less indentation than its
+      // marker. It is still part of the moved subtree and must follow the
+      // root's structural shift, otherwise the move splits the item's body.
+      const adjusted = buildIndent(unitSample, Math.max(0, currentWidth + delta));
       return `${adjusted}${line.slice(leading.length)}`;
     })
     .join("\n");

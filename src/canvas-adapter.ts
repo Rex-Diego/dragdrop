@@ -211,16 +211,18 @@ export class CanvasAdapter {
       if (!sizer) return this.safeHeight(node.height, fallbackHeight);
 
       await this.waitForStableHeight(sizer, window);
-      if (node.onResizeDblclick) {
-        const doubleClick = new window.MouseEvent("dblclick");
-        node.onResizeDblclick(doubleClick, "bottom");
-        await nextFrame(window);
-        await nextFrame(window);
-      } else if (node.resize) {
-        const measured = Math.ceil(Math.max(sizer.scrollHeight, sizer.getBoundingClientRect().height) + 48);
-        node.resize({ width: node.width, height: measured });
-        await nextFrame(window);
+      if (node.canvas.readonly || !node.canvas.nodes.has(node.id) || !node.resize) {
+        return this.safeHeight(node.height, fallbackHeight);
       }
+      const height = measureCanvasNodeHeight(node, sizer);
+      if (height === null) return this.safeHeight(node.height, fallbackHeight);
+      // A resize gesture can be patched by other plugins to enable continuous
+      // auto-height. Creation needs only a one-time fit through the size API.
+      node.resize({ width: node.width, height });
+      node.render();
+      await Promise.resolve(node.canvas.requestFrame());
+      await nextFrame(window);
+      node.canvas.nodeInteractionLayer?.render?.();
       return this.safeHeight(node.height, fallbackHeight);
     } catch (error) {
       console.error("DragDrop could not fit a Canvas node to its content.", error);
@@ -251,5 +253,21 @@ export class CanvasAdapter {
 
   private safeHeight(value: number, fallback: number): number {
     return Number.isFinite(value) && value > 0 ? value : fallback;
+  }
+}
+
+export function measureCanvasNodeHeight(node: CanvasNode, sizer: HTMLElement): number | null {
+  const preview = node.child?.previewMode?.renderer?.previewEl;
+  if (!preview || preview.clientHeight <= 0) return null;
+  const chrome = Math.max(0, node.height - preview.clientHeight);
+  preview.classList.add("dragdrop-canvas-measure-height");
+  try {
+    // offset/scroll dimensions are in CSS pixels even when the Canvas is zoomed.
+    const contentHeight = Math.max(preview.scrollHeight, sizer.scrollHeight, sizer.offsetHeight);
+    return Number.isFinite(contentHeight) && contentHeight > 0
+      ? Math.max(node.canvas.config?.minContainerDimension ?? 50, Math.ceil(contentHeight + chrome))
+      : null;
+  } finally {
+    preview.classList.remove("dragdrop-canvas-measure-height");
   }
 }

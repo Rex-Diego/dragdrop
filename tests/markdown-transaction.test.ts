@@ -39,7 +39,20 @@ describe("Markdown transaction coordinator", () => {
 
     expect(result.ok).toBe(false);
     expect(result.rollbackFailed).toBe(false);
-    expect(events).toEqual(["apply:source.md", "apply:target.md", "rollback:source.md"]);
+    expect(events).toEqual(["apply:source.md", "apply:target.md", "rollback:target.md", "rollback:source.md"]);
+  });
+
+  it("retains the destination copy if restoring a failed source write is impossible", async () => {
+    const rolledBack: string[] = [];
+    const result = await runMarkdownTransaction(
+      [mutation("target", "", "content"), mutation("source", "content", "")],
+      {
+        apply: (change) => { if (change.path === "source") throw new Error("dispatch failed after writing"); },
+        rollback: (change) => { rolledBack.push(change.path); throw new Error("source closed"); },
+      },
+    );
+    expect(result.rollbackFailed).toBe(true);
+    expect(rolledBack).toEqual(["source"]);
   });
 
   it("rejects duplicate paths before writing anything", async () => {

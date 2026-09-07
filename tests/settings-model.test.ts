@@ -53,6 +53,35 @@ describe("action-oriented modifier settings", () => {
     expect(mergeSettings({ editableBlockEmbeds: true }).editableBlockEmbeds).toBe(true);
   });
 
+  it("defaults the cross-file embed alias and safely migrates old values", () => {
+    expect(mergeSettings(undefined).crossMarkdownEmbedAlias).toBe("🔗");
+    expect(mergeSettings({ crossMarkdownEmbedAlias: "📌" }).crossMarkdownEmbedAlias).toBe("📌");
+    expect(mergeSettings({ crossMarkdownEmbedAlias: "  来源 |\n" }).crossMarkdownEmbedAlias).toBe("来源");
+    expect(mergeSettings({ crossMarkdownEmbedAlias: 42 }).crossMarkdownEmbedAlias).toBe("🔗");
+  });
+
+  it("persists new ordinary-link bindings without running the legacy embed migration", () => {
+    const settings = mergeSettings({ schemaVersion: 4 });
+    settings.markdownBindings.none = "move";
+    settings.markdownBindings.primary = "link-source";
+    settings.markdownBindings["primary+shift"] = "embed-source";
+    settings.sameMarkdownBindings.none = "move";
+    settings.sameMarkdownBindings.primary = "embed-source";
+    const reloaded = mergeSettings(settings);
+    expect(reloaded.markdownBindings).toEqual(settings.markdownBindings);
+    expect(reloaded.sameMarkdownBindings).toEqual(settings.sameMarkdownBindings);
+  });
+
+  it("does not reset explicit same-file bindings when old cross-file defaults migrate", () => {
+    const merged = mergeSettings({
+      schemaVersion: 3,
+      markdownBindings: { ...DEFAULT_SETTINGS.markdownBindings, none: "move", primary: "link-source", "primary+shift": "embed-source" },
+      sameMarkdownBindings: { ...DEFAULT_SETTINGS.sameMarkdownBindings, none: "move", primary: "embed-source" },
+    });
+    expect(merged.sameMarkdownBindings.none).toBe("move");
+    expect(merged.sameMarkdownBindings.primary).toBe("embed-source");
+  });
+
   it("migrates old data to the current schema and removes legacy protection", () => {
     const merged = mergeSettings({
       schemaVersion: 0,

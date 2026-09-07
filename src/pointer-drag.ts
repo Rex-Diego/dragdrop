@@ -1,5 +1,13 @@
 export const TOUCH_DRAG_THRESHOLD = 8;
 
+/**
+ * Long-press block selection is a touch affordance. Pen input must remain
+ * available for dragging a Markdown handle when that optional mode is on.
+ */
+export function shouldStartMobileBlockSelection(pointerType: string): boolean {
+  return pointerType === "touch";
+}
+
 export function hasCrossedPointerDragThreshold(
   startX: number,
   startY: number,
@@ -18,6 +26,27 @@ export function isSurfacePenSideButton(
 ): boolean {
   return event.pointerType === "pen" && (event.buttons & 2) !== 0;
 }
+
+const CANVAS_NATIVE_CONTROL_SELECTOR =
+  ".canvas-menu, .canvas-card-menu, .canvas-node-resizer, .canvas-node-connection-point, " +
+  ".canvas-edge, .canvas-interaction-path, .canvas-display-path, .canvas-path-label, " +
+  ".canvas-path-label-wrapper, button, input, textarea, select";
+
+/** Canvas owns these controls, including the thin card resize handles. */
+export function isCanvasNativeControlElement(
+  element: Pick<Element, "closest">,
+): boolean {
+  return element.closest(CANVAS_NATIVE_CONTROL_SELECTOR) !== null;
+}
+
+/**
+ * Used for coordinate hit testing when Chromium reports the card below a
+ * resize handle as the pointer target.
+ */
+export const CANVAS_NATIVE_HIT_SELECTOR =
+  ".canvas-node-resizer, .canvas-node-connection-point, .canvas-edge, " +
+  ".canvas-interaction-path, .canvas-display-path, .canvas-path-label, " +
+  ".canvas-path-label-wrapper";
 
 export type CanvasPenInteraction = "select" | "pan";
 

@@ -5,6 +5,9 @@ import {
   createRandomBlockId,
   ensurePlannedReference,
   isValidBlockId,
+  normalizeEmbedAlias,
+  sourceEmbedLink,
+  sourceBlockLink,
   sourceSubpath,
 } from "../src/block-reference";
 import type { SourceUnit } from "../src/model";
@@ -245,5 +248,41 @@ describe("block references", () => {
       pos: "Callout body".length,
       text: " ^333333",
     });
+  });
+
+  it("renders safe aliases in ordinary links while embeds stay independent", () => {
+    expect(normalizeEmbedAlias("  📌 来源  ")).toBe("📌 来源");
+    expect(normalizeEmbedAlias("bad|alias]\nnext")).toBe("bad alias next");
+    expect(sourceBlockLink("Notes/Source", "#^abc123", "📌")).toBe(
+      "[[Notes/Source#^abc123|📌]]",
+    );
+    expect(sourceBlockLink("Notes/Source", "#^abc123", "")).toBe("[[Notes/Source#^abc123]]");
+    expect(sourceEmbedLink("Notes/Source", "#^abc123")).toBe(
+      "![[Notes/Source#^abc123]]",
+    );
+  });
+
+  it("uses a separate root insertion anchor for a nested list", () => {
+    const state = createState(["- Parent", "  - Child"].join("\n"));
+    const rootEnd = state.doc.line(1).to;
+    const subtreeEnd = state.doc.line(2).to;
+    const planned = ensurePlannedReference(
+      state,
+      {
+        from: 0,
+        to: rootEnd,
+        text: "- Parent",
+        kind: "list-item",
+        hasListChildren: true,
+        anchorTo: subtreeEnd,
+        blockIdAnchorTo: rootEnd,
+        blockIdPlacement: "inline",
+      },
+      new Set(),
+    );
+
+    expect(planned.blockIdInsert?.pos).toBe(rootEnd);
+    expect(typeof planned.blockIdInsert?.text).toBe("string");
+    expect(planned.blockIdInsert?.text).toMatch(/^[ ]\^[A-Za-z0-9-]+$/);
   });
 });

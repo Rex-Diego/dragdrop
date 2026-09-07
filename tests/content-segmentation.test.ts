@@ -21,6 +21,13 @@ function createMarkdownState(doc: string): EditorState {
   });
 }
 
+it("keeps a root ID on the opening list line when the item has continuation text", () => {
+  const { state, units } = collectAll("- Parent ^root\n  continuation\n  - Child ^child", true);
+  expect(units[0].existingBlockId).toBe("root");
+  expect(units[1].existingBlockId).toBe("child");
+  expect(ensurePlannedReference(state, units[0], new Set()).blockIdInsert).toBeUndefined();
+});
+
 function collectAll(
   doc: string,
   splitListItems = true,
@@ -333,7 +340,8 @@ describe("content segmentation", () => {
     expect(wholeTree[0]).toMatchObject({
       kind: "list-tree",
       text: doc,
-      blockIdPlacement: "standalone",
+      blockIdPlacement: "inline",
+      blockIdAnchorTo: wholeTree[0].from + "- Parent".length,
     });
 
     const selfOnly = collectAll(doc, true, "self-only");
@@ -352,8 +360,61 @@ describe("content segmentation", () => {
     expect(nativeSubtree.units[0]).toMatchObject({
       hasListChildren: true,
       anchorTo: nativeSubtree.state.doc.line(2).to,
-      blockIdPlacement: "standalone",
+      blockIdAnchorTo: nativeSubtree.state.doc.line(1).to,
+      blockIdPlacement: "inline",
     });
+  });
+
+  it("adds a missing ID to the root line of a native subtree", () => {
+    const doc = ["- Parent", "  - Child", "    - Grandchild"].join("\n");
+    const state = createMarkdownState(doc);
+    const unit = collectSourceUnits(
+      state,
+      buildHandleRanges(state),
+      true,
+      "native-subtree",
+    )[0];
+    expect(unit).toMatchObject({
+      kind: "list-item",
+      text: "- Parent",
+      anchorTo: state.doc.line(3).to,
+      blockIdAnchorTo: state.doc.line(1).to,
+      blockIdPlacement: "inline",
+    });
+
+    const planned = ensurePlannedReference(state, unit, new Set());
+    expect(planned.blockIdInsert?.pos).toBe(state.doc.line(1).to);
+    expect(planned.blockIdInsert?.text).toMatch(/^ \^[A-Za-z0-9-]+$/);
+
+    let updatedState = state;
+    applyBlockIdInsertions(state, (transaction) => {
+      updatedState = transaction.state;
+    }, [planned]);
+    expect(updatedState.doc.toString()).toMatch(
+      /^-[ ]Parent[ ]\^[A-Za-z0-9-]+\n[ ]{2}- Child\n[ ]{4}- Grandchild$/,
+    );
+  });
+
+  it("anchors a whole hierarchy ID to the first list item, not its last child", () => {
+    const doc = ["- Parent", "  - Child", "- Sibling"].join("\n");
+    const state = createMarkdownState(doc);
+    const unit = collectSourceUnits(
+      state,
+      [{ from: 0, to: state.doc.length }],
+      false,
+      "native-subtree",
+    )[0];
+    const planned = ensurePlannedReference(state, unit, new Set());
+    expect(planned.blockIdInsert?.pos).toBe(state.doc.line(1).to);
+    expect(planned.blockIdInsert?.text).toMatch(/^ \^[A-Za-z0-9-]+$/);
+
+    let updatedState = state;
+    applyBlockIdInsertions(state, (transaction) => {
+      updatedState = transaction.state;
+    }, [planned]);
+    expect(updatedState.doc.toString()).toMatch(
+      /^-[ ]Parent[ ]\^[A-Za-z0-9-]+\n[ ]{2}- Child\n- Sibling$/,
+    );
   });
 
   it("splits only the current heading level and keeps deeper subtrees together", () => {

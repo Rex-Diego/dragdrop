@@ -13,7 +13,13 @@ export function isValidBlockId(value: string): boolean {
 }
 
 function inlineInsertionPosition(state: EditorState, unit: SourceUnit): number {
-  const end = Math.max(0, Math.min(unit.anchorTo ?? unit.to, state.doc.length));
+  // A list item with a native subtree uses anchorTo for the full referenced
+  // range. Its block ID still belongs on the root item's line, so keep the
+  // insertion anchor independent from the range anchor.
+  const end = Math.max(
+    0,
+    Math.min(unit.blockIdAnchorTo ?? unit.anchorTo ?? unit.to, state.doc.length),
+  );
   let line = state.doc.lineAt(end);
   while (line.number > 1 && line.text.trim().length === 0) {
     line = state.doc.line(line.number - 1);
@@ -43,7 +49,7 @@ export function ensurePlannedReference(
     (unit.blockIdPlacement === undefined && inlineKinds.has(unit.kind));
   const pos = inline
     ? inlineInsertionPosition(state, unit)
-    : unit.anchorTo ?? lineEndForUnit(state, unit);
+    : unit.blockIdAnchorTo ?? unit.anchorTo ?? lineEndForUnit(state, unit);
 
   return {
     ...unit,
@@ -61,8 +67,32 @@ export function sourceSubpath(unit: SourceUnit): string {
   return blockId ? `#^${blockId}` : "";
 }
 
-export function sourceEmbedLink(linktext: string, subpath = ""): string {
+/**
+ * Remove characters that would terminate or change an Obsidian wikilink
+ * alias. Empty aliases intentionally keep the legacy no-alias form.
+ */
+export function normalizeEmbedAlias(alias: string): string {
+  return alias
+    .replace(/[\r\n|\]]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+export function sourceEmbedLink(
+  linktext: string,
+  subpath = "",
+): string {
   return `![[${linktext}${subpath}]]`;
+}
+
+export function sourceBlockLink(
+  linktext: string,
+  subpath = "",
+  alias?: string,
+): string {
+  const normalizedAlias = alias === undefined ? "" : normalizeEmbedAlias(alias);
+  const aliasSuffix = normalizedAlias.length > 0 ? `|${normalizedAlias}` : "";
+  return `[[${linktext}${subpath}${aliasSuffix}]]`;
 }
 
 export function applyBlockIdInsertions(

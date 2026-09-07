@@ -28,7 +28,7 @@ function isResolvedCanvasDropAction(
 function isResolvedMarkdownDropAction(
   value: unknown,
 ): value is ResolvedMarkdownDropAction {
-  return value === "embed-source" || value === "move" || value === "none";
+  return value === "embed-source" || value === "link-source" || value === "move" || value === "none";
 }
 
 export function resolveCanvasDropAction(

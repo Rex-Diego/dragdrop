@@ -649,3 +649,51 @@
 
 - 用户授权后，Surface Pen Canvas 连线控件回归修复以 commit `60bcdef` 推送至 `codex/stage-8-dragger-integration`，tag `0.1.6` 指向该提交。
 - 正式 GitHub Release 为 `https://github.com/Rex-Diego/dragdrop/releases/tag/0.1.6`，不是 draft 或 prerelease；`main.js`、`manifest.json`、`styles.css` 三个附件均为 uploaded，GitHub digest 与本地构建一致。
+
+## 阶段 8.8 真实使用回归（2026-09-07）
+
+- 用户明确任务列表的 block ID 必须内联在根任务本行末尾：`- [ ] 任务 ^block-id`。整棵层级列表只给最父节点追加 ID，不能另起 marker 行，也不能落到最后一个子节点。
+- 不同 Markdown 之间需要新增带别名的块嵌入动作，别名设置允许 emoji 或普通文本；目标文本采用 Obsidian 原生嵌入语法 `![[文件#^block-id|别名]]`。
+- 设置说明需要从内部术语改为可直接理解的实际行为说明；涉及块嵌入时直接展示 `![[...]]` 语法，避免只写抽象名称。
+- Surface Pen 当前无法在同一 Markdown 内完成 block 拖动；修复必须复用现有 Pointer capture/单一提交所有权，不建立第二套 document 级输入系统，并保留 Canvas 连接点与边路径的原生放行。
+- 同文件 Move 当前有两类文档/视图回归：目标前后被额外插入空行，以及提交后 viewport 向后跳约半页。文本事务必须保持非目标空白逐字不变；视图恢复应以映射后的目标/原选区为锚，而不是仅盲写旧 scrollTop。
+- 任务列表横向语义由用户锁定：拖到目标左侧时不作为其子任务；拖到目标右侧时成为子任务，来源任务的全部后代一起右移。现有 `sibling | child | outdent` resolver/planner 可复用，但必须用真实坐标和子树用例验证。
+- Canvas 卡片下边沿偶发显示抓手光标、不能纵向 resize，reload 后恢复，说明可能是插件 body class、覆盖层或 pointer/session cleanup 初始化时序问题；修复不能扩大到覆盖 Obsidian 原生 resize handle。
+- 本轮开始时发现一组未完成 PDF→Canvas 改动；用户随后明确放弃该 idea，并授权回退/覆盖。该组源码、设置 schema 和规划条目不再属于项目范围，后续不得保留或发布。
+- 首轮源码定位确认任务列表 ID 的直接根因在 `content-segmentation.ts`：`combineListRun()` 对整棵列表固定 `blockIdPlacement: "standalone"`，`groupLists()` 对 `native-subtree` 且有子项的父项也固定 standalone，同时把 `anchorTo` 延伸到子树末尾。修复必须拆开“引用范围覆盖子树”和“ID 锚定根列表项行末”两个概念，不能仅修改插入字符串。
+- 同文件空行回归的直接风险点在 `markdown-drop.ts`：`removalRanges()` 主动吞掉来源块后一到两个换行，若没有则向前吞换行；`boundaryInsertion()` 又强制按双换行补齐目标两侧。结构 Move 因而不是“移动原始 Markdown 片段”，而是“删除后重新格式化分隔符”，会在紧凑任务列表中凭空增减空行。
+- 视图跳动的现有实现只保存绝对 `scrollTop/scrollLeft`，事务后通过 `requestMeasure.write` 原样回写旧像素值；文本在 viewport 之前移动时，旧绝对值不再对应原视觉锚。修复需要记录一个可映射的文档位置与其 viewport 像素偏移，事务后按新坐标恢复相对锚；光标在移动块内时还应随块映射到目标位置。
+- 跨 Markdown 当前已有唯一的 `embed-source` 动作，目标文本在 `DragSessionManager` 中直接拼接 `![[sourceLink#^id]]`。别名最小兼容路径是在该动作的 cross-file 输出层追加可配置 `|alias`，无需新增第四种破坏旧 modifier 映射的动作；同文件嵌入是否使用别名应保持独立、默认不受影响。
+- 当前会话的 UI 控制运行时未暴露任何原生 Windows app surface，只有内置浏览器；`cua.getApp` 也不可用。因此无法在本轮直接读取 Obsidian Canvas 的首次加载 DOM/cursor 状态。Canvas 下边沿修复必须以原生 `.canvas-node-resizer` 的坐标放行、指针所有权与 cleanup 回归为依据，并明确保留实体 Obsidian 验收。
+- Surface Pointer 命中 Markdown 后不能直接复用原事件的无修饰键状态：既有设置把同文件 `none` 绑定为 `embed-source`，而用户要求侧键完成结构移动。锁定规则为：Surface Pen 侧键、同文件、且没有真实键盘修饰键时，将其解释为 Primary chord；若用户按了 Ctrl/Command/Shift/Alt，则真实修饰键优先，最终动作仍由可配置的同文件绑定决定。
+- 本机 Obsidian 核心包的原生 CSS 明确把 `.canvas-node-resizer[data-resize='bottom']` 设为 `cursor: ns-resize`；核心 `nodeInteractionLayer.render()` 又以当前节点 `x/y/width/height` 布置共享 hover/resize 层。用户描述“自动创建后下边沿是小手、reload 后恢复”因此更符合插件自动改高后共享交互层尺寸滞后，而不是应该覆盖原生 cursor。修复在 `CanvasAdapter.fitHeight()` 最终尺寸确定后显式执行 `node.render()`、`canvas.requestFrame()` 与可用时的 `nodeInteractionLayer.render()`，不添加覆盖 Obsidian resize cursor 的 CSS。
+- 列表 ID 修复通过新增 `blockIdAnchorTo` 把“引用覆盖整棵子树的 `anchorTo`”与“ID 属于根列表项本行末尾”解耦；这样 `#^id` 仍解析整棵层级列表，但写回固定为 `- [ ] 父任务 ^id`。
+- 同文件 Move 的分隔符规划改为复用来源/目标原有换行 run，不再统一格式化为双换行；`mapPositionAfterMove()` 使用同一插入算法。滚动恢复同时保存顶端文档锚点和像素偏移，并随事务映射锚点，避免源块位于 viewport 之前时旧绝对 scrollTop 造成半页跳动。
+- 跨文件嵌入沿用唯一的 `embed-source` 动作，只在 cross-file 输出层追加经清理的可配置别名；默认 `🔗`，空字符串保留无别名语法。这样不改动 `none = embed-source / primary = move` 的既有绑定与迁移边界。
+
+### 阶段 8.8 实机反证与 8.9 纠错入口（2026-09-07）
+
+- 8.9 接手已直接读取安装目录配置：`sameMarkdownBindings.none=move`、`primary=embed-source`；跨文件仍为 `none=embed-source`、`primary=move`，其余六种组合均 inherit。笔侧键强制模拟 Primary 是设置失效的确定根因，应删除输入层的动作覆盖。
+- Pointer capture 的 composedPath 仍属于源抓手；目前 Markdown resolver 优先匹配该路径，跨分栏可能误选源 view。Pointer 落点应仅按当前 owner document 坐标命中。
+- 同文件 Move 当前仍整篇替换，再单独恢复 selection/focus/scroll；8.8 顶端锚点还跟随移动块跳到新位置。修复要生成精确删除/插入 changes，并在同一事务携带原生滚动快照，保留原视口而不跟随移走的源块。
+
+- 用户实机确认 8.8 未解决关键问题：同一 Markdown 的无修饰键动作设置没有生效，实际仍插入嵌入；新 Canvas 卡片下边沿仍为抓手状态，必须 reload 后才可 resize；同文件拖动后仍高速跳到陌生位置。
+- 用户对“别名”的目标是普通双链 `[[文件#^block-id|别名]]`，不是块嵌入 `![[文件#^block-id|别名]]`。8.8 将其实现为带别名的块嵌入是明确需求误读，必须去掉 `!` 并同步设置文案与测试。
+- 自动化测试、构建通过和三方哈希一致只证明源码与产物一致，不能覆盖上述真实 Obsidian 行为。8.8 的 `code_complete_ui_validation_pending` 结论已撤回，相关功能重新进入根因诊断。
+- 同文件动作问题必须先读取实际标准插件目录 `data.json`，再追踪 schema 迁移、设置页保存、source/target path context、dragover/drop 动作缓存与最终 commit；不能继续仅用默认值测试推断用户当前配置。
+- 视图跳转问题说明 8.8 的自定义 `lineBlockAtHeight(scrollTop + 8)` 顶端锚点模型可能使用了错误坐标系，或额外的 selection/focus dispatch 触发了 CodeMirror 自动滚动。优先改用 CodeMirror 自身可映射的 `scrollSnapshot()` effect，或在同一 transaction 中携带等价滚动语义。
+- Canvas 问题说明仅在 fit height 后调用 `node.render()`、`requestFrame()` 与 `nodeInteractionLayer.render()` 不足。reload 后恢复的特征仍指向首次创建/自动 fit 的交互层 target 或 `onResizeDblclick` 生命周期，需要从调用顺序和核心对象状态重新定位，而不是增加 CSS cursor 覆盖。
+- 用户明确要求不再使用 Luna worker；本轮纠错由主代理独立完成，并对 8.8 相对 `60bcdef` 的全部业务差异逐项审查。
+
+### 8.9 实施证据
+
+- 别名动作采用独立 `link-source`；`embed-source` 恢复无别名原生嵌入。schema 4 保留新链接绑定，旧 schema 的历史 link-source 仍按旧语义迁移。原实际配置不覆写。
+- Move 使用精确删除/插入 ChangeSet；同一事务内映射选区与原生 scrollSnapshot。视口按普通文档变化映射，选区按被移动块映射，且不调用 focus。另一分栏仅等待 Obsidian 同步后恢复视图，不二次写入内容。
+- 跨文件目标先写、源后写；编辑器 transaction filter 在 dispatch 前校验完整结果，拒绝局部变更，避免失败事务漏回滚。确认弹窗后重新检查目标内容、文件身份及可写性。
+- 实际启用的是 Enhanced Canvas 1.0.29，Advanced Canvas 未启用。Enhanced Canvas 包装 onResizeDblclick(bottom) 设置内存 autoHeightEnabled；创建时调用该手势会引发持久副作用。已改为一次性测高 + node.resize + 原生交互层刷新；仍需真实新卡片验证。
+- 回归额外发现末尾块移动仅消耗最多两个换行，现改为完整换行 run；多块移动分别计算位置及缩进偏移。右侧 child 意图固定放到目标子树之后，防止最近边界位于父项之前。
+- 最终格式保护还包括保留文件尾部换行与连续选中块之间各自的原间距；列表续行首行已有 ID 必须优先识别，防止重复补 ID 或借用子项 ID。旧跨文件默认迁移不会覆盖显式保存的同文件绑定。
+- 已有嵌入复制保留原别名并按目标笔记重算路径；新增普通双链使用用户设置别名，默认不占用原有修饰键，需在设置里给“插入别名双链”分配按键。
+- 事务协调器将尝试写入也纳入回滚。如果恢复源失败，则停止继续撤销目标副本，避免源和目标同时丢失；错误提示会明确要求核对两份笔记。
+- 本轮 Computer Use 已可访问真实 Windows Obsidian 窗口，修正此前“只有浏览器 surface”的环境结论。但 Ctrl+R 被自动审批拒绝，尚无本轮真实拖动/视口/底边缩放通过证据；不能把 163 项自动测试当作实机通过。
+- 最终六文件三方部署哈希一致，标准插件目录配置与交付目录 graph-worker.js 均保留；安装目录内容已更新，但需获准重载后才会进入运行中的开发库。

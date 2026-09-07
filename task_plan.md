@@ -4,7 +4,7 @@
 实现名为 `dragdrop` 的 Obsidian 插件：删除 CardNote 的搜索、Excalidraw 和窗口管理功能，保留并重构 Markdown→Canvas 拖拽；阶段 6 实现 Markdown→Markdown 直通拖拽和 Canvas 归纳按钮，阶段 7 实现可编辑块嵌入，阶段 8 选择性融合 obsidian-dragger 的结构重排、多选、块菜单、跨文件目标、视觉和移动端交互。鼠标链路支持桌面端与弹出窗口，触控链路优先支持 Surface 并为 iPad 提供能力守卫下的实验兼容。
 
 ## 当前阶段
-阶段 8：obsidian-dragger 选择性融合（8.7 收口执行中；阶段 7 实机验收仍独立保留）
+阶段 8：obsidian-dragger 选择性融合（8.9 代码纠错、自动化验证和最终本地部署完成，重载后的实机验收等待明确批准；阶段 7 实机验收仍独立保留）
 
 ## 各阶段
 
@@ -196,6 +196,34 @@
 - [ ] clipboard 失败不删除，跨文件失败 rollback，已有 ID 的破坏性跨文件操作必须确认
 - [ ] 取消、Escape、pointercancel、窗口关闭和插件 unload 后不残留 capture、selection、indicator、highlight 或 listener
 - [ ] 文字选区菜单在 Markdown、PDF/PDF++ 与 Canvas 卡片编辑器中的 `-1/0/正数秒数（允许小数）` 设定互斥且可预测；正值菜单避让选区、半透明、hover 时不消失，窗口关闭或插件 unload 后不残留 observer、timer 或菜单 class
+
+### 阶段 8.8：真实使用回归修复（2026-09-07）
+
+- [x] Markdown→Canvas 的任务列表与整棵层级列表统一把缺失 block ID 写成根列表项本行末尾的 ` ^block-id`；不得另起 marker 行，也不得把整棵列表的 ID 写到子项末尾
+- [ ] 不同 Markdown 之间的别名动作应输出普通双链 `[[文件#^block-id|别名]]`，不得带 `!`；8.8 曾误实现为块嵌入别名，待 8.9 纠正
+- [ ] 重新核对同一 Markdown 的无修饰键设置读取、保存、动作解析和实际部署配置；用户实机确认当前设置未生效且结果仍为嵌入
+- [ ] Surface Pen 可从同一 Markdown 的 block 抓手命中 Markdown 落点；侧键与真实键盘修饰键继续服从可配置动作，但不得硬编码覆盖用户的无修饰键设置
+- [x] 同 Markdown Move 不再固定补双空行；列表横向落点明确区分左侧 sibling/outdent 与右侧 child，移动父任务时整棵子树共同缩进
+- [ ] 同 Markdown Move 后保持 CodeMirror 的真实 viewport 与焦点，不再飞速跳到陌生位置；8.8 的自定义顶端锚点恢复已被实机证伪，待改用 CodeMirror 原生可映射滚动快照或等价机制
+- [ ] Canvas 新建卡片自动适配高度后，下边沿立即保持原生 `ns-resize`/纵向 resize；8.8 的刷新调用已被实机证伪，必须重新核对首次创建时的原生交互层生命周期
+- [ ] 为 8.9 的真实根因补回归测试，并重新完成 lint、typecheck、test、build、node check 与 diff check
+- [x] 已部署六个发布文件到 `.obsidian/plugins/dragdrop` 和 `plugins-dev/plugin`；三方 SHA-256 一致，`data.json` 与 `graph-worker.js` 哈希保持不变
+- **状态：** reopened_after_real_ui_failures
+
+### 阶段 8.9：8.8 实机失败纠错（2026-09-07）
+
+- 本次接手继续完成上一任务的回归修复；独立实施，不调用子代理。优先处理动作、普通双链、事务滚动与 Canvas 自动高度，再做关联差异审计、测试和本地部署。早期阶段的硬件验收保持独立。
+- [x] 读取标准插件目录 `data.json`，确认同文件/跨文件八种 modifier chord 的实际值，并沿 `loadData → mergeSettings → settings save → dragover/drop cache → commit` 全链追踪无修饰键动作；移除笔侧键模拟 Primary，补事件适配层回归
+- [x] 新增独立 `link-source` 动作输出普通双链 `[[...|别名]]`，同步用户可见名称、说明、README 与测试；保留原嵌入和已保存绑定，schema 4 防止新链接绑定被旧迁移吞掉
+- [x] 替换自定义 viewport 锚点；Move 精确 ChangeSet 与原生 scrollSnapshot 在同一事务提交，同文件另一分栏等待原生同步后恢复视图；代码及回归完成，真实滚动体验见下方验收项
+- [x] 完成 Canvas 首次创建诊断与代码修复：避开 Enhanced Canvas 包装的底边双击手势，使用一次性测高、resize 与交互层刷新，保留原生 cursor；首次缩放实测见下方验收项
+- [x] 审查 8.8 相对 `60bcdef` 的业务差异，保留列表根 ID 与已放弃功能清理；补续行首行已有 ID、EOF 换行、多块间距、独立分栏配置迁移及回滚保留目标副本
+- [x] 完成 lint 零 warnings、typecheck、23 files / 163 tests、沙箱外生产 build 与 node check
+- [x] 核对最终六文件三方部署哈希，data.json/graph-worker.js 未变化（构建 main.js SHA-256：7C11BDEC03D77A1E28238793133055CEEED4A8BD0241FC9B2ACE421C37A9CB96）
+- [x] 用户已授权提交、推送与发布；版本升级至 `0.1.7`，待完成 commit/tag/push/Release 收口
+- [ ] 实机验收四条路径：鼠标同文件移动/列表缩进/空行/视口及撤销；同文件双分栏和 Surface Pen 真实无修饰键移动；跨文件普通双链与原嵌入分离；新 Canvas 卡片未 reload 前的底边 resize 与连接点
+- 自动审批已拒绝对 canvasread-dev 执行 Ctrl+R，理由为未保存编辑与临时状态可能丢失。已发出明确重载批准问题，等待用户答复后继续。独立样本已建立于开发库根目录：DragDrop-regression-20260907.md / .canvas；未改已有笔记。
+- **状态：** in_progress
 
 ### 阶段 5：交付
 - [x] 更新 README 或使用说明

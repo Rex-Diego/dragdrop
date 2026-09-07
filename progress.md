@@ -628,3 +628,66 @@
 
 - 已创建发布代码 commit `60bcdef`（`Release 0.1.6 Surface Pen Canvas connection controls`）并推送到 `codex/stage-8-dragger-integration`；tag `0.1.6` 指向该提交。
 - 已创建正式 GitHub Release `0.1.6`：`https://github.com/Rex-Diego/dragdrop/releases/tag/0.1.6`。Release 不是 draft 或 prerelease，`main.js`、`manifest.json` 和 `styles.css` 均已上传；GitHub SHA-256 digest 与本地构建逐项一致。
+
+## 会话：2026-09-07（阶段 8.8 真实使用回归开始）
+
+- 用户要求直接修复六类真实使用问题：任务/层级列表 ID 归属与内联格式、跨 Markdown 带别名块嵌入及易懂设置说明、Surface Pen 同文件拖动、同文件 Move 空行/列表层级/视图跳动，以及 Canvas 卡片下边沿 resize 光标冲突。
+- 已完整恢复三个规划文件，读取当前 planning-with-files 3.16.1、中文入口与仓库 Obsidian 技能，并按范围读取文件操作、UI/UX、生命周期、CSS 和无障碍 reference。
+- 项目约定指定的旧 `C:\Users\rex18\.codex\skills\planning-with-files-zh\SKILL.md` 已不存在；按中文入口回退到当前已安装的 `planning-with-files`，继续复用根目录三份规划文件。
+- 工作树开始时发现未完成 PDF→Canvas 改动：`findings.md`、`task_plan.md`、`src/settings-model.ts` 和未跟踪 `src/pdf-model.ts`。用户随后明确放弃该 idea 并授权回退；已删除 `src/pdf-model.ts` 和 PDF 规划/发现条目，设置模型中的 PDF schema/字段由正在负责 alias 设置的子代理一并移除。
+- 当前进入只读根因定位和测试设计；由主代理独占更新三份规划文件，子代理仅负责边界明确的代码审查/实现并避开 PDF 模块。
+- 首轮源码定位：列表 ID standalone 来自 `content-segmentation.ts`；同文件空行增减来自 `markdown-drop.ts` 同时吞/补分隔换行；视图恢复只回写旧绝对 `scrollTop`；Surface Pointer drop 只解析 Canvas 目标。
+- 尝试用当前 Windows/Obsidian 实机控制能力读取 Canvas 下边沿运行时状态时，运行时只返回内置浏览器且没有原生 app surface；随后 `cua.getApp("Obsidian")` 明确返回 `cua.getApp is not a function`。停止重复该路径，本轮以回归测试和安全 DOM 放行为主，最终 Canvas resize 与 Surface 行为仍需真实 Obsidian 实机复核。
+
+### 本轮错误记录
+
+| 错误 | 尝试次数 | 解决方案 |
+|------|---------|---------|
+| 当前 Computer Use 运行时没有原生 App API，`cua.getApp("Obsidian")` 不可调用 | 1 | 不重复调用；继续以源码/测试修复，并保留真实 Obsidian UI 验收项 |
+
+### 阶段 8.8 实现、验证与部署
+
+- 任务/层级列表引用新增独立 `blockIdAnchorTo`：引用范围仍可覆盖完整子树，缺失 ID 统一写到根列表项本行末尾的 ` ^block-id`；普通任务项和整棵层级列表均有回归用例。
+- 跨 Markdown 的 `embed-source` 现在输出 `![[文件#^block-id|别名]]`，默认别名为 `🔗`；设置页允许 emoji、文本或留空，并过滤会破坏 wikilink 的 `|`、`]` 和换行。相关中英文说明直接展示 Obsidian 语法；同文件嵌入不追加别名。
+- Pointer 拖动现在按 Canvas 优先、Markdown 次之解析同一窗口落点并复用唯一 `commitMarkdownDrop`。Surface Pen 不再误入触控长按选块；侧键在同文件且无真实键盘修饰键时使用 Primary chord，默认完成 Move，真实键盘修饰键仍优先。
+- 同文件 Move 改用来源与目标已有换行 run 规划删除/插入，不再强制双空行；实际写入和位置映射共用同一算法。任务父项移动时整棵子树（含 lazy continuation）按同一 delta 缩进。
+- 编辑器视图快照新增可映射的 viewport 顶端文档锚点及像素偏移；事务后恢复映射后的 selection/focus/scroll，避免仅回写旧 `scrollTop` 导致屏幕后跳。
+- 检查本机 Obsidian 核心包确认下边 resize 的原生 cursor 为 `ns-resize`，共享 `nodeInteractionLayer` 依赖节点最新尺寸。Canvas 自动适配高度后现显式刷新节点、Canvas frame 和可用的原生 interaction layer；Pen 几何命中同时继续放行 `.canvas-node-resizer`。未添加 cursor 覆盖 CSS。
+- 用户已放弃的 PDF→Canvas idea 已从源码、设置 schema 与规划/发现中移除；`src/pdf-model.ts` 不存在，最终关键词检查未发现 `pdfRenderDpi`、`pdfWhiteThreshold`、`lastPdfPath`、`pdfCropMemory`、`normalizePdf*` 或 `pdf-model` 残留（仅本条历史说明除外）。
+- 完整验证通过：`npm.cmd run lint`、`npm.cmd run typecheck`、Vitest 21 files / 135 tests、`npm.cmd run build`、`node --check main.js`、`git diff --check`。
+- 已将 `manifest.json`、`main.js`、`styles.css`、`README.md`、`LICENSE`、`versions.json` 同步到 `C:\Users\rex18\project\canvasread-dev\.obsidian\plugins\dragdrop` 与 `C:\Users\rex18\project\canvasread-dev\.obsidian\plugins-dev\plugin`。六个文件与源码三方 SHA-256 逐项一致；标准目录的 `data.json` 和交付目录的 `graph-worker.js` 哈希保持不变。`main.js` SHA-256 为 `324C27EEE7FE9CB11C9900808696006A1539C3E41501E977C1E31FA8D254C24D`。
+- 本轮未 commit、push、打 tag 或创建 GitHub Release。真实 Obsidian/Surface 的鼠标 HTML5、Pen 同文件 Move、下边 resize cursor 与旧工作流验收仍保留，需重载 Obsidian 后复测。
+
+## 会话：2026-09-07（阶段 8.8 实机失败，转入 8.9 纠错）
+
+### 接手任务继续
+
+- 已读取上一任务全部用户消息和最终交接，分段恢复三个规划文件；保留现有未提交的 8.8 代码，独立复查。
+- 旧 planning-with-files-zh 路径不存在，已找到并完整读取安装插件中的 3.16.1 中文技能；Obsidian 技能与相关 reference 已读取。
+- 工具恢复遇到 read_thread turnLimit 上限 10 和长输出截断，已改为过滤消息及分段文件读取；目录扫描访问受限后改为获批只读定位 Obsidian 安装目录。
+- 确认当前用户动作配置保存正确，笔侧键强制 Primary 与 Pointer capture 命中源路径均需要修复；开始精确事务与 Canvas 核心行为诊断。
+
+- 用户实机复测否定了 8.8 的关键行为结论：同一 Markdown 无修饰键设置未生效且仍为嵌入；普通双链别名被误做成块嵌入别名；新 Canvas 卡片下边沿仍需 reload 才能 resize；同文件拖动后仍高速跳屏。
+- 已撤回 `task_plan.md` 中对应“已完成”勾选并新增阶段 8.9。自动化通过与部署哈希只保留为历史证据，不再作为功能完成依据。
+- 本轮全程不再使用 Luna worker 或其他子代理。下一步先读取实际 `data.json` 与 8.8 全量 diff，分别追踪动作解析、CodeMirror 滚动恢复和 Canvas 首次创建交互层时序；普通双链别名属于确定性错误，可直接建立失败测试后纠正。
+
+### 8.9 代码与定向回归
+
+- 已实施真实修饰键、Pointer 坐标分栏命中、独立普通双链、精确 Move、原生滚动快照、同文件分栏同步保护和 Canvas 一次性 resize。
+- 新增 manager 级回归覆盖笔侧键真实绑定、单序列一次提交、普通双链 ID 写回、源拒绝后的目标回滚及弹窗并发变化。新增 Canvas adapter 首次创建、缩放单位、节点删除生命周期测试。
+- 定向测试发现 EOF 多换行残留，已修复；全量检查发现旧 action-resolution 测试将新 link-source 当作非法值，已更新用例。
+- Computer Use 已成功枚举开发库和另一个 Obsidian 窗口，选定 canvasread-dev；当前正准备独立测试文件进行真实鼠标验收。尚未部署本轮 bundle。
+
+### 8.9 最终自动化与验收门禁
+
+- 全量验证通过：lint 0 errors / 0 warnings、typecheck、23 files / 163 tests、生产 build、node --check main.js。生产 build 首次受沙箱目录遍历权限影响，随后按项目规则在沙箱外成功运行。
+- 覆盖新失败场景：源 dispatch 在应用事务后抛错仍恢复两份文档；源恢复失败保留目标副本；不同换行间隔与 EOF 换行；多块位置/缩进；父列表首行已有 ID；旧 schema 独立同文件配置不被覆盖。
+- 首批六文件已部署并核对一致，data.json/graph-worker.js 保持原哈希；独立测试笔记和空白白板已创建在开发库根目录。本条之后还需最终构建哈希核对。
+- 已选定真实 canvasread-dev 窗口并读取其可访问性树。Ctrl+R 被自动审批拒绝，理由是可能丢失未保存编辑或非平凡临时状态且缺少明确批准。已通过异步问题申请重载批准，尚未收到答复；未尝试绕过拒绝。
+- 最终 main.js SHA-256：7C11BDEC03D77A1E28238793133055CEEED4A8BD0241FC9B2ACE421C37A9CB96。本轮未 commit/push/release，未触碰既有用户笔记，实机验收保持未完成。
+- 最终六文件已重新同步，两处目标与源码三方 SHA-256 全部一致；data.json 与 graph-worker.js 再次确认未变化。当前唯一阻塞入口为开发库重载批准，独立实机样本已就绪。
+
+### 0.1.7 提交、推送与 Release 准备
+
+- 用户已明确授权 commit、push、release；版本统一升级为 `0.1.7`，同步 `manifest.json`、`package.json`、`package-lock.json` 和 `versions.json`。
+- 版本升级后的 lint、typecheck、163 项测试、生产 build 与 `git diff --check` 均通过；等待提交后创建 tag 和正式 GitHub Release。

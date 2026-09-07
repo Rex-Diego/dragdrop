@@ -30,7 +30,7 @@ module.exports = __toCommonJS(main_exports);
 var import_obsidian11 = require("obsidian");
 
 // src/drag-handle-extension.ts
-var import_state = require("@codemirror/state");
+var import_state2 = require("@codemirror/state");
 var import_view = require("@codemirror/view");
 var import_obsidian = require("obsidian");
 
@@ -81,7 +81,7 @@ function createPrimitive(doc, lineFrom, lineTo, kind, extra = {}) {
   const from = doc.line(lineFrom).from;
   const to = doc.line(lineTo).to;
   const text = doc.sliceString(from, to);
-  const openingId = kind === "quote" || kind === "callout" ? openingLineBlockId(text) : void 0;
+  const openingId = kind === "quote" || kind === "callout" || kind === "list-item" ? openingLineBlockId(text) : void 0;
   const quotedBlockId = kind === "quote" || kind === "callout" ? blockIdOnAnyLine(text) : void 0;
   return {
     from,
@@ -268,17 +268,21 @@ function combineListRun(state, run) {
   const first = run[0];
   const last = run.at(-1) ?? first;
   const text = state.doc.sliceString(first.from, last.to);
+  const rootLineEnd = state.doc.line(first.lineFrom).to;
   return {
     ...first,
     kind: "list-tree",
     from: first.from,
     to: last.to,
     text,
-    existingBlockId: existingBlockId(text) ?? standaloneBlockIdAfter(state.doc, last.anchorTo ?? last.to),
+    // A whole list tree is addressed by its root item. Do not accidentally
+    // reuse a child ID from the end of the selected subtree.
+    existingBlockId: openingLineBlockId(first.text) ?? standaloneBlockIdAfter(state.doc, last.anchorTo ?? last.to),
     hasListChildren: run.length > 1,
     anchorFrom: first.from,
     anchorTo: last.anchorTo ?? last.to,
-    blockIdPlacement: "standalone",
+    blockIdAnchorTo: rootLineEnd,
+    blockIdPlacement: "inline",
     selfOnlyText: withoutTrailingBlockId(first.text.split("\n", 1)[0] ?? first.text)
   };
 }
@@ -292,8 +296,13 @@ function groupLists(state, blocks, splitListItems, listParentDisplay) {
       return {
         ...block,
         anchorTo,
-        existingBlockId: standalone ? standaloneBlockIdAfter(state.doc, anchorTo) ?? block.existingBlockId : block.existingBlockId,
-        blockIdPlacement: standalone ? "standalone" : "inline"
+        existingBlockId: standalone ? block.existingBlockId ?? standaloneBlockIdAfter(state.doc, anchorTo) : block.existingBlockId,
+        // The referenced range may include the complete native subtree, but
+        // the marker itself belongs to the root list item line.
+        // Even a list item with lazy continuation text is identified by its
+        // marker line, not by the end of that continuation range.
+        blockIdAnchorTo: state.doc.line(block.lineFrom).to,
+        blockIdPlacement: "inline"
       };
     });
   }
@@ -397,6 +406,119 @@ function calloutGutterOffset(side, geometry) {
   const baseLeft = geometry.markerLeft - geometry.previousOffset;
   const baseRight = geometry.markerRight - geometry.previousOffset;
   return side === "right" ? geometry.lineRight + geometry.gap - baseLeft : geometry.lineLeft - geometry.gap - baseRight;
+}
+
+// src/editor-view-state.ts
+var import_state = require("@codemirror/state");
+function captureEditorViewSnapshot(view) {
+  const scrollTop = view.scrollDOM.scrollTop;
+  return {
+    selection: view.state.selection.ranges.map(({ anchor, head }) => ({ anchor, head })),
+    mainIndex: view.state.selection.mainIndex,
+    scrollTop,
+    scrollLeft: view.scrollDOM.scrollLeft,
+    focused: view.hasFocus,
+    scrollEffect: typeof view.scrollSnapshot === "function" ? view.scrollSnapshot() : void 0
+  };
+}
+function mappedSelectionSnapshot(snapshot, mapPosition, documentLength) {
+  const ranges = snapshot.selection.map(
+    ({ anchor, head }) => import_state.EditorSelection.range(
+      Math.max(0, Math.min(documentLength, mapPosition(anchor))),
+      Math.max(0, Math.min(documentLength, mapPosition(head)))
+    )
+  );
+  return import_state.EditorSelection.create(ranges, snapshot.mainIndex ?? 0);
+}
+function restoreEditorViewSnapshot(view, snapshot, mapPosition = (position) => position, changes) {
+  const scrollEffect = changes ? snapshot.scrollEffect?.map(changes) : snapshot.scrollEffect;
+  view.dispatch({
+    selection: mappedSelectionSnapshot(snapshot, mapPosition, view.state.doc.length),
+    effects: scrollEffect ? [scrollEffect] : [],
+    scrollIntoView: false,
+    annotations: import_state.Transaction.addToHistory.of(false)
+  });
+  if (!scrollEffect) restoreLegacyScroll(view, snapshot);
+}
+function restoreLegacyScroll(view, snapshot) {
+  view.requestMeasure({
+    read: () => null,
+    write: () => {
+      if (!view.dom.isConnected) return;
+      const maxTop = Math.max(0, view.scrollDOM.scrollHeight - view.scrollDOM.clientHeight);
+      const maxLeft = Math.max(0, view.scrollDOM.scrollWidth - view.scrollDOM.clientWidth);
+      view.scrollDOM.scrollTop = Math.min(Math.max(0, snapshot.scrollTop), maxTop);
+      view.scrollDOM.scrollLeft = Math.min(Math.max(0, snapshot.scrollLeft), maxLeft);
+    }
+  });
+}
+function dispatchEditorChanges(view, changeSpec, mapPosition) {
+  const changes = import_state.ChangeSet.of(changeSpec, view.state.doc.length);
+  if (changes.empty) return;
+  const snapshot = captureEditorViewSnapshot(view);
+  const scrollEffect = snapshot.scrollEffect?.map(changes);
+  const transaction = view.state.update({
+    changes,
+    selection: mappedSelectionSnapshot(snapshot, mapPosition ?? ((position) => changes.mapPos(position)), changes.newLength),
+    effects: scrollEffect ? [scrollEffect] : [],
+    scrollIntoView: false,
+    userEvent: "input.drop"
+  });
+  if (!transaction.newDoc.eq(changes.apply(view.state.doc))) {
+    throw new Error("An editor rejected or modified the Markdown drop.");
+  }
+  view.dispatch(transaction);
+  if (!scrollEffect) restoreLegacyScroll(view, snapshot);
+}
+var pendingEditorSync = /* @__PURE__ */ new WeakMap();
+function preserveEditorOnSync(view, changes, mapPosition = (position) => changes.mapPos(position)) {
+  const pending = {
+    snapshot: captureEditorViewSnapshot(view),
+    changes,
+    mapPosition,
+    after: changes.apply(view.state.doc).toString(),
+    expiresAt: Date.now() + 5e3
+  };
+  pendingEditorSync.set(view, pending);
+  return () => {
+    if (pendingEditorSync.get(view) === pending) pendingEditorSync.delete(view);
+  };
+}
+function restorePendingEditorSync(update) {
+  const pending = pendingEditorSync.get(update.view);
+  if (!pending || !update.docChanged) return;
+  pendingEditorSync.delete(update.view);
+  if (Date.now() > pending.expiresAt || update.state.doc.toString() !== pending.after) return;
+  const state = update.state;
+  queueMicrotask(() => {
+    if (!update.view.dom.isConnected || update.view.state !== state) return;
+    restoreEditorViewSnapshot(update.view, pending.snapshot, pending.mapPosition, pending.changes);
+  });
+}
+function documentChanges(before, after) {
+  if (before === after) return import_state.ChangeSet.empty(before.length);
+  const oldLines = before.split("\n");
+  const newLines = after.split("\n");
+  const changes = [];
+  const addChange = (oldText, newText, offset) => {
+    let start = 0;
+    let oldEnd = oldText.length;
+    let newEnd = newText.length;
+    while (start < oldEnd && start < newEnd && oldText[start] === newText[start]) start += 1;
+    while (oldEnd > start && newEnd > start && oldText[oldEnd - 1] === newText[newEnd - 1]) {
+      oldEnd -= 1;
+      newEnd -= 1;
+    }
+    if (start < oldEnd || start < newEnd) changes.push({ from: offset + start, to: offset + oldEnd, insert: newText.slice(start, newEnd) });
+  };
+  if (oldLines.length === newLines.length) {
+    let offset = 0;
+    oldLines.forEach((line, index) => {
+      addChange(line, newLines[index], offset);
+      offset += line.length + 1;
+    });
+  } else addChange(before, after, 0);
+  return import_state.ChangeSet.of(changes, before.length);
 }
 
 // src/drag-handle-extension.ts
@@ -585,7 +707,7 @@ function createDragHandleElement(starter, view, range) {
   return element;
 }
 function buildDecorations(state, starter) {
-  const builder = new import_state.RangeSetBuilder();
+  const builder = new import_state2.RangeSetBuilder();
   for (const range of buildHandleRanges(state)) {
     if (range.kind === "callout") continue;
     builder.add(
@@ -601,7 +723,7 @@ function buildDecorations(state, starter) {
   return builder.finish();
 }
 function buildGutterMarkers(state, starter) {
-  const builder = new import_state.RangeSetBuilder();
+  const builder = new import_state2.RangeSetBuilder();
   for (const range of buildHandleRanges(state)) {
     if (range.kind !== "callout") continue;
     builder.add(range.from, range.from, new DragHandleGutterMarker(starter, range));
@@ -609,7 +731,7 @@ function buildGutterMarkers(state, starter) {
   return builder.finish();
 }
 function createDragHandleExtension(starter) {
-  const decorationField = import_state.StateField.define({
+  const decorationField = import_state2.StateField.define({
     create(state) {
       return buildDecorations(state, starter);
     },
@@ -619,7 +741,7 @@ function createDragHandleExtension(starter) {
     },
     provide: (field) => import_view.EditorView.decorations.from(field)
   });
-  const gutterField = import_state.StateField.define({
+  const gutterField = import_state2.StateField.define({
     create(state) {
       return buildGutterMarkers(state, starter);
     },
@@ -640,6 +762,7 @@ function createDragHandleExtension(starter) {
     }),
     createGutterHoverExtension(),
     import_view.EditorView.updateListener.of((update) => {
+      restorePendingEditorSync(update);
       if (update.docChanged || update.viewportChanged || update.geometryChanged) {
         scheduleCalloutGutterAlignment(update.view);
       }
@@ -648,7 +771,7 @@ function createDragHandleExtension(starter) {
 }
 
 // src/drag-session-manager.ts
-var import_state3 = require("@codemirror/state");
+var import_state4 = require("@codemirror/state");
 var import_view2 = require("@codemirror/view");
 var import_obsidian6 = require("obsidian");
 
@@ -676,7 +799,7 @@ function isResolvedCanvasDropAction(value) {
   return value === "link-source" || value === "create-note" || value === "none";
 }
 function isResolvedMarkdownDropAction(value) {
-  return value === "embed-source" || value === "move" || value === "none";
+  return value === "embed-source" || value === "link-source" || value === "move" || value === "none";
 }
 function resolveCanvasDropAction(event, bindings) {
   const configured = bindings?.[modifierChordFromEvent(event)];
@@ -702,7 +825,10 @@ function createRandomBlockId(length = 6) {
   return Array.from({ length }, () => Math.floor(Math.random() * 16).toString(16)).join("");
 }
 function inlineInsertionPosition(state, unit) {
-  const end = Math.max(0, Math.min(unit.anchorTo ?? unit.to, state.doc.length));
+  const end = Math.max(
+    0,
+    Math.min(unit.blockIdAnchorTo ?? unit.anchorTo ?? unit.to, state.doc.length)
+  );
   let line = state.doc.lineAt(end);
   while (line.number > 1 && line.text.trim().length === 0) {
     line = state.doc.line(line.number - 1);
@@ -721,7 +847,7 @@ function ensurePlannedReference(state, unit, usedIds) {
   usedIds.add(blockId);
   const inlineKinds = /* @__PURE__ */ new Set(["paragraph", "list-item", "quote", "callout"]);
   const inline = unit.blockIdPlacement === "inline" || unit.blockIdPlacement === void 0 && inlineKinds.has(unit.kind);
-  const pos = inline ? inlineInsertionPosition(state, unit) : unit.anchorTo ?? lineEndForUnit(state, unit);
+  const pos = inline ? inlineInsertionPosition(state, unit) : unit.blockIdAnchorTo ?? unit.anchorTo ?? lineEndForUnit(state, unit);
   return {
     ...unit,
     plannedBlockId: blockId,
@@ -737,8 +863,16 @@ function sourceSubpath(unit) {
   const blockId = unit.plannedBlockId ?? unit.existingBlockId;
   return blockId ? `#^${blockId}` : "";
 }
+function normalizeEmbedAlias(alias) {
+  return alias.replace(/[\r\n|\]]+/g, " ").replace(/\s+/g, " ").trim();
+}
 function sourceEmbedLink(linktext, subpath = "") {
   return `![[${linktext}${subpath}]]`;
+}
+function sourceBlockLink(linktext, subpath = "", alias) {
+  const normalizedAlias = alias === void 0 ? "" : normalizeEmbedAlias(alias);
+  const aliasSuffix = normalizedAlias.length > 0 ? `|${normalizedAlias}` : "";
+  return `[[${linktext}${subpath}${aliasSuffix}]]`;
 }
 function applyBlockIdInsertions(state, dispatch, units) {
   const changes = units.flatMap((unit) => unit.blockIdInsert ? [unit.blockIdInsert] : []).sort((left, right) => {
@@ -889,16 +1023,16 @@ var CanvasAdapter = class {
       const sizer = await this.waitForSizer(node, window);
       if (!sizer) return this.safeHeight(node.height, fallbackHeight);
       await this.waitForStableHeight(sizer, window);
-      if (node.onResizeDblclick) {
-        const doubleClick = new window.MouseEvent("dblclick");
-        node.onResizeDblclick(doubleClick, "bottom");
-        await nextFrame(window);
-        await nextFrame(window);
-      } else if (node.resize) {
-        const measured = Math.ceil(Math.max(sizer.scrollHeight, sizer.getBoundingClientRect().height) + 48);
-        node.resize({ width: node.width, height: measured });
-        await nextFrame(window);
+      if (node.canvas.readonly || !node.canvas.nodes.has(node.id) || !node.resize) {
+        return this.safeHeight(node.height, fallbackHeight);
       }
+      const height = measureCanvasNodeHeight(node, sizer);
+      if (height === null) return this.safeHeight(node.height, fallbackHeight);
+      node.resize({ width: node.width, height });
+      node.render();
+      await Promise.resolve(node.canvas.requestFrame());
+      await nextFrame(window);
+      node.canvas.nodeInteractionLayer?.render?.();
       return this.safeHeight(node.height, fallbackHeight);
     } catch (error) {
       console.error("DragDrop could not fit a Canvas node to its content.", error);
@@ -928,8 +1062,21 @@ var CanvasAdapter = class {
     return Number.isFinite(value) && value > 0 ? value : fallback;
   }
 };
+function measureCanvasNodeHeight(node, sizer) {
+  const preview = node.child?.previewMode?.renderer?.previewEl;
+  if (!preview || preview.clientHeight <= 0) return null;
+  const chrome = Math.max(0, node.height - preview.clientHeight);
+  preview.classList.add("dragdrop-canvas-measure-height");
+  try {
+    const contentHeight = Math.max(preview.scrollHeight, sizer.scrollHeight, sizer.offsetHeight);
+    return Number.isFinite(contentHeight) && contentHeight > 0 ? Math.max(node.canvas.config?.minContainerDimension ?? 50, Math.ceil(contentHeight + chrome)) : null;
+  } finally {
+    preview.classList.remove("dragdrop-canvas-measure-height");
+  }
+}
 
 // src/markdown-drop.ts
+var import_state3 = require("@codemirror/state");
 var DIRECT_BLOCK_EMBED_RE = /^\s*!\[\[[^\]\r\n]*#\^[A-Za-z0-9-]+(?:\|[^\]\r\n]*)?\]\]\s*$/;
 function directBlockEmbed(text) {
   const trimmed = text.trim();
@@ -985,12 +1132,10 @@ function removalRanges(content, ranges) {
     const previous = result.at(-1);
     let from = Math.max(range.from, previous?.to ?? 0);
     let to = range.to;
-    const after = content.slice(to, to + 2);
-    if (after === "\n\n") to += 2;
-    else if (content.slice(to, to + 1) === "\n") to += 1;
+    const after = leadingNewlineCount(content.slice(to));
+    if (after > 0 && to + after < content.length) to += after;
     else if (!previous || previous.to < range.from) {
-      if (content.slice(Math.max(0, from - 2), from) === "\n\n") from -= 2;
-      else if (content.slice(Math.max(0, from - 1), from) === "\n") from -= 1;
+      from -= trailingNewlineCount(content.slice(0, from));
     }
     if (previous && from < previous.to) from = previous.to;
     result.push({ from, to });
@@ -1027,19 +1172,115 @@ function boundaryInsertion(content, position, blocks) {
   const afterSeparator = after.length === 0 ? "" : after.startsWith("\n\n") ? "" : after.startsWith("\n") ? "\n" : "\n\n";
   return `${beforeSeparator}${body}${afterSeparator}`;
 }
+function trailingNewlineCount(text) {
+  let count = 0;
+  for (let index = text.length - 1; index >= 0 && text[index] === "\n"; index -= 1) {
+    count += 1;
+  }
+  return count;
+}
+function leadingNewlineCount(text) {
+  let count = 0;
+  for (let index = 0; index < text.length && text[index] === "\n"; index += 1) {
+    count += 1;
+  }
+  return count;
+}
+function moveSeparatorHint(content, ranges) {
+  const sorted = normalizedRanges(content, ranges);
+  const first = sorted[0];
+  if (!first) return "\n";
+  const before = trailingNewlineCount(content.slice(0, first.from));
+  if (before > 0) return "\n".repeat(before);
+  const after = leadingNewlineCount(content.slice(first.to));
+  return "\n".repeat(Math.max(1, after));
+}
+function moveBoundaryInsertion(content, position, blocks, fallbackSeparator, blockSeparators = []) {
+  const safePosition = Math.max(0, Math.min(position, content.length));
+  const before = content.slice(0, safePosition);
+  const after = content.slice(safePosition);
+  const body = blocks.map((block) => block.replace(/\n+$/g, "")).filter((block) => block.trim().length > 0).map((block, index) => `${index === 0 ? "" : blockSeparators[index - 1] ?? fallbackSeparator}${block}`).join("");
+  if (!body) return { text: "", start: safePosition };
+  const beforeNewlines = trailingNewlineCount(before);
+  const afterNewlines = leadingNewlineCount(after);
+  const fallbackCount = Math.max(1, trailingNewlineCount(fallbackSeparator));
+  const destinationCount = after.length === afterNewlines ? beforeNewlines : Math.max(beforeNewlines, afterNewlines);
+  const separator = "\n".repeat(destinationCount > 0 ? destinationCount : fallbackCount);
+  const beforeSeparator = before.length === 0 || beforeNewlines > 0 ? "" : separator;
+  const afterSeparator = after.length === 0 || afterNewlines > 0 ? "" : separator;
+  return {
+    text: `${beforeSeparator}${body}${afterSeparator}`,
+    start: safePosition + beforeSeparator.length
+  };
+}
 function insertBlocksAtBoundary(content, position, blocks) {
   const safePosition = Math.max(0, Math.min(position, content.length));
   return `${content.slice(0, safePosition)}${boundaryInsertion(content, safePosition, blocks)}${content.slice(safePosition)}`;
 }
-function planMarkdownMove(content, blocks, targetPosition) {
+function planMarkdownMoveChanges(content, blocks, targetPosition) {
+  blocks = [...blocks].sort((left, right) => left.from - right.from);
   const ranges = blocks.map(({ from, to }) => ({ from, to }));
-  const remaining = removeTextRanges(content, ranges);
-  const mappedPosition = mapPositionAfterRemovals(targetPosition, content, ranges);
-  return insertBlocksAtBoundary(
+  const doc = import_state3.Text.of(content.split("\n"));
+  const removals = import_state3.ChangeSet.of(removalRanges(content, ranges).map((range) => ({
+    ...range,
+    insert: ""
+  })), content.length);
+  const remaining = removals.apply(doc).toString();
+  let mappedPosition = removals.mapPos(Math.max(0, Math.min(targetPosition, content.length)));
+  if (targetPosition >= content.length) mappedPosition -= trailingNewlineCount(remaining);
+  const separator = moveSeparatorHint(content, ranges);
+  const blockSeparators = blocks.slice(1).map((block, index) => {
+    const gap = content.slice(blocks[index].to, block.from);
+    return /^\n+$/.test(gap) ? gap : separator;
+  });
+  const insertion = moveBoundaryInsertion(
     remaining,
     mappedPosition,
-    blocks.map((block) => block.text)
+    blocks.map((block) => block.text),
+    separator,
+    blockSeparators
   );
+  const changes = removals.compose(import_state3.ChangeSet.of({
+    from: mappedPosition,
+    insert: insertion.text
+  }, remaining.length));
+  return {
+    changes,
+    after: changes.apply(doc).toString(),
+    mapPosition: (position) => {
+      let start = insertion.start;
+      for (const [index, block] of blocks.entries()) {
+        const text = block.text.replace(/\n+$/g, "");
+        if (position >= block.from && position <= block.to) {
+          return start + mapMovedBlockOffset(
+            content.slice(block.from, block.to),
+            text,
+            position - block.from
+          );
+        }
+        start += text.length + (blockSeparators[index] ?? separator).length;
+      }
+      return changes.mapPos(position, 1);
+    }
+  };
+}
+function mapMovedBlockOffset(before, after, offset) {
+  const oldLines = before.split("\n");
+  const newLines = after.split("\n");
+  let oldStart = 0;
+  let newStart = 0;
+  for (let index = 0; index < oldLines.length; index += 1) {
+    const oldLine = oldLines[index];
+    const newLine = newLines[index] ?? "";
+    if (offset <= oldStart + oldLine.length) {
+      const oldIndent = oldLine.match(/^[ \t]*/)?.[0].length ?? 0;
+      const newIndent = newLine.match(/^[ \t]*/)?.[0].length ?? 0;
+      return newStart + Math.max(0, Math.min(newLine.length, offset - oldStart + newIndent - oldIndent));
+    }
+    oldStart += oldLine.length + 1;
+    newStart += newLine.length + 1;
+  }
+  return after.length;
 }
 function applyTextChanges(content, changes) {
   const sorted = changes.map((change, index) => ({ ...change, index })).sort((left, right) => left.from - right.from || left.to - right.to || left.index - right.index);
@@ -1067,20 +1308,8 @@ function mapPositionAfterInsertion(content, position, blocks, insertionPosition)
   const inserted = boundaryInsertion(content, safeInsertionPosition, blocks);
   return safePosition >= safeInsertionPosition ? safePosition + inserted.length : safePosition;
 }
-function mapPositionAfterMove(content, blocks, targetPosition, position) {
-  const ranges = blocks.map(({ from, to }) => ({ from, to }));
-  const remaining = removeTextRanges(content, ranges);
-  const mappedTarget = mapPositionAfterRemovals(targetPosition, content, ranges);
-  const inserted = boundaryInsertion(remaining, mappedTarget, blocks.map((block) => block.text));
-  const before = remaining.slice(0, Math.max(0, Math.min(mappedTarget, remaining.length)));
-  const beforeSeparator = before.length === 0 ? "" : before.endsWith("\n\n") ? "" : before.endsWith("\n") ? "\n" : "\n\n";
-  const insertionStart = mappedTarget + beforeSeparator.length;
-  const containing = ranges.find((range) => position >= range.from && position <= range.to);
-  if (containing) {
-    return insertionStart + Math.max(0, Math.min(position - containing.from, containing.to - containing.from));
-  }
-  const afterRemoval = mapPositionAfterRemovals(position, content, ranges);
-  return afterRemoval >= mappedTarget ? afterRemoval + inserted.length : afterRemoval;
+function boundaryInsertionForBlocks(content, position, blocks) {
+  return boundaryInsertion(content, position, blocks);
 }
 
 // src/canvas-reference.ts
@@ -1539,8 +1768,8 @@ async function runMarkdownTransaction(mutations, adapter) {
   try {
     for (const mutation of mutations) {
       if (mutation.before === mutation.after) continue;
-      await adapter.apply(mutation);
       applied.push(mutation);
+      await adapter.apply(mutation);
     }
     return { ok: true, rollbackFailed: false };
   } catch (error) {
@@ -1550,6 +1779,7 @@ async function runMarkdownTransaction(mutations, adapter) {
         await adapter.rollback(mutation);
       } catch {
         rollbackFailed = true;
+        break;
       }
     }
     return { ok: false, error, rollbackFailed };
@@ -1635,8 +1865,7 @@ function adjustListBlockIndent(sourceText, targetLineText, intent) {
     if (line.trim().length === 0) return line;
     const leading = line.match(/^[ \t]*/)?.[0] ?? "";
     const currentWidth = indentWidth(leading);
-    if (currentWidth < sourceList.indentWidth) return line;
-    const adjusted = buildIndent(unitSample, currentWidth + delta);
+    const adjusted = buildIndent(unitSample, Math.max(0, currentWidth + delta));
     return `${adjusted}${line.slice(leading.length)}`;
   }).join("\n");
 }
@@ -1747,13 +1976,6 @@ function findMoveTargetIssue(content, sourceRanges, targetPosition) {
   }
   return null;
 }
-function planStructuredMarkdownMove(content, blocks, targetPosition, targetLineText, listIntent) {
-  return planMarkdownMove(
-    content,
-    structuredMoveBlocks(blocks, targetLineText, listIntent),
-    targetPosition
-  );
-}
 function structuredMoveBlocks(blocks, targetLineText, listIntent) {
   return listIntent === null ? [...blocks] : blocks.map((block) => ({
     ...block,
@@ -1818,57 +2040,11 @@ function restoreFoldStarts(view, starts) {
   if (effects.length > 0) view.dispatch({ effects });
 }
 
-// src/editor-view-state.ts
-var import_state2 = require("@codemirror/state");
-function captureEditorViewSnapshot(view) {
-  return {
-    selection: view.state.selection.ranges.map(({ anchor, head }) => ({ anchor, head })),
-    scrollTop: view.scrollDOM.scrollTop,
-    scrollLeft: view.scrollDOM.scrollLeft,
-    focused: view.hasFocus
-  };
-}
-function mappedSelectionSnapshot(snapshot, mapPosition, documentLength) {
-  const ranges = snapshot.selection.map(
-    ({ anchor, head }) => import_state2.EditorSelection.range(
-      Math.max(0, Math.min(documentLength, mapPosition(anchor))),
-      Math.max(0, Math.min(documentLength, mapPosition(head)))
-    )
-  ).sort((left, right) => left.from - right.from || left.to - right.to);
-  const normalized = ranges.reduce((result, range) => {
-    const previous = result[result.length - 1];
-    if (!previous || range.from > previous.to) {
-      result.push(range);
-      return result;
-    }
-    result[result.length - 1] = import_state2.EditorSelection.range(
-      previous.from,
-      Math.max(previous.to, range.to)
-    );
-    return result;
-  }, []);
-  return import_state2.EditorSelection.create(normalized);
-}
-function restoreEditorViewSnapshot(view, snapshot, mapPosition = (position) => position) {
-  view.dispatch({
-    selection: mappedSelectionSnapshot(snapshot, mapPosition, view.state.doc.length),
-    scrollIntoView: false
-  });
-  if (snapshot.focused) view.focus();
-  view.requestMeasure({
-    read: () => null,
-    write: () => {
-      if (!view.dom.isConnected) return;
-      const maxTop = Math.max(0, view.scrollDOM.scrollHeight - view.scrollDOM.clientHeight);
-      const maxLeft = Math.max(0, view.scrollDOM.scrollWidth - view.scrollDOM.clientWidth);
-      view.scrollDOM.scrollTop = Math.min(Math.max(0, snapshot.scrollTop), maxTop);
-      view.scrollDOM.scrollLeft = Math.min(Math.max(0, snapshot.scrollLeft), maxLeft);
-    }
-  });
-}
-
 // src/pointer-drag.ts
 var TOUCH_DRAG_THRESHOLD = 8;
+function shouldStartMobileBlockSelection(pointerType) {
+  return pointerType === "touch";
+}
 function hasCrossedPointerDragThreshold(startX, startY, currentX, currentY) {
   return Math.hypot(currentX - startX, currentY - startY) >= TOUCH_DRAG_THRESHOLD;
 }
@@ -1878,6 +2054,11 @@ function matchesPointerDrag(activePointerId, eventPointerId) {
 function isSurfacePenSideButton(event) {
   return event.pointerType === "pen" && (event.buttons & 2) !== 0;
 }
+var CANVAS_NATIVE_CONTROL_SELECTOR = ".canvas-menu, .canvas-card-menu, .canvas-node-resizer, .canvas-node-connection-point, .canvas-edge, .canvas-interaction-path, .canvas-display-path, .canvas-path-label, .canvas-path-label-wrapper, button, input, textarea, select";
+function isCanvasNativeControlElement(element) {
+  return element.closest(CANVAS_NATIVE_CONTROL_SELECTOR) !== null;
+}
+var CANVAS_NATIVE_HIT_SELECTOR = ".canvas-node-resizer, .canvas-node-connection-point, .canvas-edge, .canvas-interaction-path, .canvas-display-path, .canvas-path-label, .canvas-path-label-wrapper";
 function canvasPenButtonForInteraction(interaction) {
   return interaction === "pan" ? 1 : 0;
 }
@@ -1917,6 +2098,9 @@ function createCanvasPointerEventInit(source, ownerWindow2, button, buttons) {
 // src/drag-session-manager.ts
 var SESSION_MIME = "application/x-dragdrop-session";
 var MOBILE_SELECTION_DELAY_MS = 200;
+function isMarkdownDropTarget(target) {
+  return target !== null && "editorView" in target;
+}
 function isDocumentLike(value) {
   return typeof value === "object" && value !== null && "nodeType" in value && "defaultView" in value && "body" in value;
 }
@@ -2112,7 +2296,7 @@ var DragSessionManager = class extends import_obsidian6.Component {
       mobileSelectionMode: false,
       mobileSelectionTimer: null
     };
-    if (this.host.config.mobileBlockInteractions && this.host.config.multiBlockSelection && !sideButton) {
+    if (this.host.config.mobileBlockInteractions && this.host.config.multiBlockSelection && shouldStartMobileBlockSelection(event.pointerType) && !sideButton) {
       const ownerWindow2 = element.ownerDocument.defaultView;
       if (ownerWindow2) {
         const pointerDrag = this.pointerDrag;
@@ -2168,8 +2352,26 @@ var DragSessionManager = class extends import_obsidian6.Component {
       this.ensureGhost(pointerDrag.element.ownerDocument);
     }
     const target = this.findPointerDropTarget(pointerDrag, event);
+    let targetValid = target !== null;
+    if (isMarkdownDropTarget(target)) {
+      const modifierState = event;
+      const action = this.resolveMarkdownActionForTarget(modifierState, target.context);
+      this.cacheMarkdownAction(
+        action,
+        modifierState,
+        target.file,
+        target.ownerDocument,
+        target.context
+      );
+      targetValid = action !== "none" && !(action === "move" && target.issue !== null);
+      if (targetValid) this.showMarkdownDropLine(target);
+      else this.hideMarkdownDropLine();
+      this.updateAutoScroll(target, event.clientX, event.clientY, action);
+    } else {
+      this.clearMarkdownDropTarget();
+    }
     this.moveGhostTo(event.clientX + 16, event.clientY + 16);
-    this.ghostElement?.toggleClass("dragdrop-ghost-valid", target !== null);
+    this.ghostElement?.toggleClass("dragdrop-ghost-valid", targetValid);
   }
   async endPointerDrag(event) {
     if (this.finishSelectionPointer(event.pointerId)) {
@@ -2192,6 +2394,20 @@ var DragSessionManager = class extends import_obsidian6.Component {
     const target = this.findPointerDropTarget(pointerDrag, event);
     if (!session || !target) {
       this.cleanupDrag();
+      return;
+    }
+    if (isMarkdownDropTarget(target)) {
+      const modifierState = event;
+      await this.commitMarkdownDrop(
+        session,
+        target,
+        this.cachedMarkdownAction(
+          modifierState,
+          target.file,
+          target.ownerDocument,
+          target.context
+        )
+      );
       return;
     }
     await this.commitDrop(
@@ -2484,16 +2700,19 @@ var DragSessionManager = class extends import_obsidian6.Component {
     return activeElement.tagName === "INPUT" || activeElement.tagName === "TEXTAREA";
   }
   findPointerDropTarget(pointerDrag, event) {
-    return this.canvasAdapter.findDropTargetAt({
+    const point = {
       ownerDocument: pointerDrag.element.ownerDocument,
       x: event.clientX,
       y: event.clientY
-    });
+    };
+    const canvasTarget = this.canvasAdapter.findDropTargetAt(point);
+    if (canvasTarget) return canvasTarget;
+    return this.findMarkdownDropTarget(event);
   }
   findMarkdownDropTarget(event) {
     const eventTarget = isNodeLike2(event.target) ? event.target : null;
     const ownerDocument = eventTarget?.ownerDocument ?? activeDocument;
-    const path = event.composedPath();
+    const path = "pointerId" in event ? [] : event.composedPath();
     const pointElement = ownerDocument.elementFromPoint(event.clientX, event.clientY);
     const candidates = [];
     this.host.app.workspace.iterateAllLeaves((leaf) => {
@@ -2504,16 +2723,16 @@ var DragSessionManager = class extends import_obsidian6.Component {
       if (!view2.containerEl.isConnected) return;
       candidates.push(view2);
     });
-    const view = candidates.find((candidate) => {
-      if (path.includes(candidate.containerEl)) return true;
-      return pointElement ? candidate.containerEl.contains(pointElement) : false;
-    });
+    const view = candidates.find(
+      (candidate) => pointElement !== null && candidate.containerEl.contains(pointElement)
+    ) ?? candidates.find((candidate) => path.includes(candidate.containerEl));
     if (!view || !(view.file instanceof import_obsidian6.TFile)) return null;
     const editorElement = view.containerEl.querySelector(".cm-editor");
     if (!editorElement) return null;
     const editorView = import_view2.EditorView.findFromDOM(editorElement);
     if (!editorView || editorView.dom.ownerDocument !== ownerDocument) return null;
-    const position = this.markdownDropPosition(editorView, event);
+    if (!pointElement || !editorView.dom.contains(pointElement)) return null;
+    let position = this.markdownDropPosition(editorView, event);
     const rawPosition = editorView.posAtCoords({ x: event.clientX, y: event.clientY }) ?? position;
     const targetLine = editorView.state.doc.lineAt(rawPosition);
     const sourceText = this.session?.units[0]?.text ?? "";
@@ -2524,6 +2743,10 @@ var DragSessionManager = class extends import_obsidian6.Component {
       pointerColumn: rawPosition - targetLine.from,
       contextLineNumber: targetLine.number
     });
+    const context = sameSourceFile ? "same-file" : "cross-file";
+    if (this.host.config.structuralMarkdownMoves && listIntent?.mode === "child" && this.resolveMarkdownActionForTarget(event, context) === "move") {
+      position = buildHandleRanges(editorView.state).find((range) => range.from === targetLine.from)?.to ?? targetLine.to;
+    }
     return {
       view,
       editorView,
@@ -2537,7 +2760,7 @@ var DragSessionManager = class extends import_obsidian6.Component {
         sameSourceFile ? this.session?.units ?? [] : [],
         position
       ),
-      context: sameSourceFile ? "same-file" : "cross-file",
+      context,
       ownerDocument
     };
   }
@@ -2923,18 +3146,16 @@ var DragSessionManager = class extends import_obsidian6.Component {
     return view.containerEl.querySelector(".canvas-wrapper");
   }
   isCanvasControl(element) {
-    return element.closest(
-      ".canvas-menu, .canvas-card-menu, .canvas-node-resizer, .canvas-node-connection-point, .canvas-edge, .canvas-interaction-path, .canvas-display-path, .canvas-path-label, .canvas-path-label-wrapper, button, input, textarea, select"
-    ) !== null;
+    return isCanvasNativeControlElement(element);
   }
   isCanvasPenNativePointer(event) {
     const nativePointer = this.canvasPenNativePointer;
     return nativePointer !== null && nativePointer.pointerId === event.pointerId && this.isSameEventDocument(event, nativePointer.ownerDocument);
   }
   isCanvasNativeTargetAtPoint(view, clientX, clientY) {
-    const candidates = Array.from(view.containerEl.querySelectorAll(
-      ".canvas-node-connection-point, .canvas-edge, .canvas-interaction-path, .canvas-display-path, .canvas-path-label, .canvas-path-label-wrapper"
-    ));
+    const candidates = Array.from(
+      view.containerEl.querySelectorAll(CANVAS_NATIVE_HIT_SELECTOR)
+    );
     for (const candidate of candidates) {
       const rect = candidate.getBoundingClientRect();
       if (isPointInsidePointerRect(rect, clientX, clientY)) {
@@ -3083,7 +3304,9 @@ var DragSessionManager = class extends import_obsidian6.Component {
   async commitMarkdownDrop(session, target, action) {
     if (!this.isMarkdownTargetConnected(target)) return;
     if (!this.commitGate.tryClaim(session.id, "markdown")) return;
+    this.stopAutoScroll();
     try {
+      const targetState = target.editorView.state;
       if (action === "none") return;
       if (action === "move" && target.issue !== null) {
         new import_obsidian6.Notice(this.markdownDropIssueMessage(target.issue));
@@ -3109,21 +3332,29 @@ var DragSessionManager = class extends import_obsidian6.Component {
         if (requiresMoveConfirmation(session.units, target.context)) {
           const confirmed = await new MoveConfirmationModal(this.host.app, session.units.filter((unit) => unit.existingBlockId).length).openAndConfirm();
           if (!confirmed || !session.sourceView.state.doc.eq(session.sourceState.doc)) return;
+          if (!this.isMarkdownTargetConnected(target) || !target.editorView.state.doc.eq(targetState.doc) || !this.isEditorWritable(target.editorView) || !this.isEditorWritable(session.sourceView)) {
+            new import_obsidian6.Notice("A note changed or closed while confirming the move. Try again.");
+            return;
+          }
         }
-        this.moveMarkdownBlocks(session, target);
+        await this.moveMarkdownBlocks(session, target);
         return;
       }
       if (session.units.some((unit) => unit.blockIdInsert !== void 0) && !this.isEditorWritable(session.sourceView)) {
         new import_obsidian6.Notice("The source note is read-only and needs a block ID before it can be embedded.");
         return;
       }
-      await this.embedMarkdownBlocks(session, target);
+      await this.embedMarkdownBlocks(session, target, action === "link-source");
+    } catch (error) {
+      console.error("DragDrop could not complete a Markdown drop.", error);
+      new import_obsidian6.Notice("Could not complete the Markdown drop. Check the affected notes.");
     } finally {
       this.cleanupDrag();
     }
   }
   async commitMarkdownFileDrop(session, target, action) {
     if (!this.commitGate.tryClaim(session.id, "markdown")) return;
+    this.stopAutoScroll();
     try {
       if (action === "none") return;
       if (target.file.path === session.sourceFile.path) {
@@ -3149,18 +3380,12 @@ var DragSessionManager = class extends import_obsidian6.Component {
       }
       const targetBefore = await this.host.app.vault.read(target.file);
       const sourceBefore = session.sourceState.doc.toString();
-      const planned = action === "embed-source" ? this.planMarkdownReferences(session.sourceState, session.units) : session.units;
-      const sourceLink = this.host.app.metadataCache.fileToLinktext(
-        session.sourceFile,
-        target.file.path,
-        true
-      );
-      const targetBlocks = planned.map(
-        (unit) => action === "move" ? unit.text : directBlockEmbed(unit.text) ?? `![[${sourceLink}${sourceSubpath(unit)}]]`
-      );
+      const references = action === "move" ? [] : this.markdownReferences(session);
+      const planned = action === "move" ? session.units : references.map(({ unit }) => unit);
+      const targetBlocks = action === "move" ? planned.map((unit) => unit.text) : this.markdownReferenceTexts(references, target.file, action === "link-source");
       const targetAfter = insertBlocksAtBoundary(targetBefore, targetBefore.length, targetBlocks);
       const sourceAfter = action === "move" ? removeTextRanges(sourceBefore, session.units) : applyTextChanges(sourceBefore, this.blockIdChanges(planned));
-      if (action === "embed-source" && planned.some((unit) => unit.blockIdInsert !== void 0) && !this.isEditorWritable(session.sourceView)) {
+      if (action !== "move" && planned.some((unit) => unit.blockIdInsert !== void 0) && !this.isEditorWritable(session.sourceView)) {
         new import_obsidian6.Notice("The source note is read-only and needs a block ID before it can be embedded.");
         return;
       }
@@ -3174,37 +3399,41 @@ var DragSessionManager = class extends import_obsidian6.Component {
         before: targetBefore,
         after: targetAfter
       };
+      const sourceSnapshot = captureEditorViewSnapshot(session.sourceView);
+      const attempted = /* @__PURE__ */ new Set();
       const transaction = await runMarkdownTransaction(
-        [sourceMutation, targetMutation],
+        [targetMutation, sourceMutation],
         {
           apply: async (mutation) => {
             if (mutation.path === session.sourceFile.path) {
-              if (!session.sourceView.state.doc.eq(session.sourceState.doc) || session.sourceView.state.doc.toString() !== mutation.before) {
+              if (!this.isEditorWritable(session.sourceView) || session.sourceView.state.doc.toString() !== mutation.before) {
                 throw new Error("The source note changed during the Markdown drop.");
               }
-              session.sourceView.dispatch({
-                changes: { from: 0, to: session.sourceView.state.doc.length, insert: mutation.after }
-              });
+              attempted.add(mutation.path);
+              dispatchEditorChanges(session.sourceView, documentChanges(mutation.before, mutation.after));
               return;
             }
             await this.host.app.vault.process(target.file, (current) => {
               if (current !== mutation.before) {
                 throw new Error("The file target changed during the Markdown drop.");
               }
+              attempted.add(mutation.path);
               return mutation.after;
             });
           },
           rollback: async (mutation) => {
+            if (!attempted.has(mutation.path)) return;
             if (mutation.path === session.sourceFile.path) {
-              if (session.sourceView.state.doc.toString() !== mutation.after) {
+              if (session.sourceView.state.doc.toString() === mutation.before) return;
+              if (!this.isEditorWritable(session.sourceView) || session.sourceView.state.doc.toString() !== mutation.after) {
                 throw new Error("The source note changed before rollback.");
               }
-              session.sourceView.dispatch({
-                changes: { from: 0, to: session.sourceView.state.doc.length, insert: mutation.before }
-              });
+              dispatchEditorChanges(session.sourceView, documentChanges(mutation.after, mutation.before));
+              restoreEditorViewSnapshot(session.sourceView, sourceSnapshot);
               return;
             }
             await this.host.app.vault.process(target.file, (current) => {
+              if (current === mutation.before) return current;
               if (current !== mutation.after) {
                 throw new Error("The file target changed before rollback.");
               }
@@ -3214,52 +3443,42 @@ var DragSessionManager = class extends import_obsidian6.Component {
         }
       );
       if (!transaction.ok) {
-        if (transaction.rollbackFailed) {
-          new import_obsidian6.Notice("The Markdown drop failed and could not fully roll back. Reload the affected notes.");
-        }
-        throw transaction.error instanceof Error ? transaction.error : new Error("The Markdown drop transaction failed.");
+        console.error("DragDrop file-target transaction failed.", transaction.error);
+        new import_obsidian6.Notice(transaction.rollbackFailed ? "The Markdown drop failed and could not fully roll back. Check both notes." : "Could not complete the Markdown drop. Applied changes were rolled back.");
       }
     } catch (error) {
       console.error("DragDrop could not complete a file-target Markdown drop.", error);
-      new import_obsidian6.Notice("Could not complete the file-target Markdown drop. No content was moved.");
+      new import_obsidian6.Notice("Could not complete the file-target Markdown drop. Check the affected notes.");
     } finally {
       this.cleanupDrag();
     }
   }
   isMarkdownTargetConnected(target) {
-    return target.view.containerEl.isConnected && target.view.containerEl.ownerDocument === target.ownerDocument && target.editorView.dom.isConnected && target.file instanceof import_obsidian6.TFile;
+    return target.view.containerEl.isConnected && target.view.containerEl.ownerDocument === target.ownerDocument && target.editorView.dom.isConnected && target.view.file?.path === target.file.path && target.file instanceof import_obsidian6.TFile;
   }
   isEditorWritable(view) {
-    return view.dom.isConnected && view.state.facet(import_state3.EditorState.readOnly) !== true && view.state.facet(import_view2.EditorView.editable) !== false;
+    return view.dom.isConnected && view.state.facet(import_state4.EditorState.readOnly) !== true && view.state.facet(import_view2.EditorView.editable) !== false;
   }
-  async embedMarkdownBlocks(session, target) {
+  async embedMarkdownBlocks(session, target, plainLink = false) {
     const sourceFoldStarts = this.host.config.preserveFoldState ? captureFoldStarts(session.sourceView.state) : [];
     const targetFoldStarts = this.host.config.preserveFoldState && target.editorView !== session.sourceView ? captureFoldStarts(target.editorView.state) : [];
-    const planned = this.planMarkdownReferences(session.sourceState, session.units);
+    const references = this.markdownReferences(session);
+    const planned = references.map(({ unit }) => unit);
     const sourceContent = session.sourceState.doc.toString();
     const idChanges = this.blockIdChanges(planned);
     const sourceWithIds = applyTextChanges(sourceContent, idChanges);
     const sameDocument = session.sourceView === target.editorView || target.file.path === session.sourceFile.path && target.editorView.state.doc.eq(session.sourceState.doc);
     const targetContent = target.editorView.state.doc.toString();
-    const sourceLink = this.host.app.metadataCache.fileToLinktext(
-      session.sourceFile,
-      target.file.path,
-      true
-    );
-    const embeds = planned.map(
-      (unit) => directBlockEmbed(unit.text) ?? `![[${sourceLink}${sourceSubpath(unit)}]]`
-    );
-    let sourceAfter = sourceWithIds;
-    let targetAfter = insertBlocksAtBoundary(targetContent, target.position, embeds);
+    const embeds = this.markdownReferenceTexts(references, target.file, plainLink);
     if (sameDocument) {
-      const mappedPosition = mapPositionAfterChanges(target.position, idChanges);
-      targetAfter = insertBlocksAtBoundary(sourceWithIds, mappedPosition, embeds);
-      sourceAfter = targetAfter;
-    }
-    if (sameDocument && session.sourceView !== target.editorView) {
-      session.sourceView.dispatch({
-        changes: { from: 0, to: session.sourceView.state.doc.length, insert: sourceAfter }
-      });
+      const ids = session.sourceState.changes(idChanges);
+      const mappedPosition = ids.mapPos(target.position, 1);
+      const insertion = boundaryInsertionForBlocks(sourceWithIds, mappedPosition, embeds);
+      const changes = ids.compose(import_state4.ChangeSet.of({
+        from: mappedPosition,
+        insert: insertion
+      }, ids.newLength));
+      this.applySameDocumentChanges(session.sourceView, target.editorView, changes);
       this.restoreEmbeddedFoldState(
         session.sourceView,
         sourceFoldStarts,
@@ -3270,13 +3489,13 @@ var DragSessionManager = class extends import_obsidian6.Component {
       );
       return;
     }
-    const applied = this.applyMarkdownDocuments(
+    const applied = await this.applyMarkdownDocuments(
       session.sourceView,
       target.editorView,
       sourceContent,
       targetContent,
-      sourceAfter,
-      targetAfter
+      sourceWithIds,
+      insertBlocksAtBoundary(targetContent, target.position, embeds)
     );
     if (!applied || !this.host.config.preserveFoldState) return;
     this.restoreEmbeddedFoldState(
@@ -3296,8 +3515,7 @@ var DragSessionManager = class extends import_obsidian6.Component {
       ));
     }
   }
-  moveMarkdownBlocks(session, target) {
-    const sourceViewSnapshot = captureEditorViewSnapshot(session.sourceView);
+  async moveMarkdownBlocks(session, target) {
     const sourceFoldStarts = this.host.config.preserveFoldState ? captureFoldStarts(session.sourceView.state) : [];
     const targetFoldStarts = this.host.config.preserveFoldState && target.editorView !== session.sourceView ? captureFoldStarts(target.editorView.state) : [];
     const sourceContent = session.sourceState.doc.toString();
@@ -3310,14 +3528,17 @@ var DragSessionManager = class extends import_obsidian6.Component {
     const targetContent = target.editorView.state.doc.toString();
     const listIntent = this.host.config.structuralMarkdownMoves ? target.listIntent : null;
     const plannedBlocks = structuredMoveBlocks(blocks, target.targetLineText, listIntent);
-    const sourceAfter = sameDocument ? this.planOrderedListMove(
-      sourceContent,
-      blocks,
-      target.position,
-      target.targetLineText,
-      listIntent
-    ) : this.host.config.renumberOrderedLists ? renumberOrderedListMarkers(removeTextRanges(sourceContent, blocks)) : removeTextRanges(sourceContent, blocks);
-    const targetAfter = sameDocument ? sourceAfter : this.host.config.renumberOrderedLists ? renumberOrderedListMarkers(insertBlocksAtBoundary(
+    if (sameDocument) {
+      const plan = planMarkdownMoveChanges(sourceContent, plannedBlocks, target.position);
+      const renumberChanges = documentChanges(plan.after, this.host.config.renumberOrderedLists ? renumberOrderedListMarkers(plan.after) : plan.after);
+      const changes = plan.changes.compose(renumberChanges);
+      const mapPosition = (position) => renumberChanges.mapPos(plan.mapPosition(position));
+      this.applySameDocumentChanges(session.sourceView, target.editorView, changes, mapPosition);
+      restoreFoldStarts(session.sourceView, sourceFoldStarts.map(mapPosition));
+      return;
+    }
+    const sourceAfter = this.host.config.renumberOrderedLists ? renumberOrderedListMarkers(removeTextRanges(sourceContent, blocks)) : removeTextRanges(sourceContent, blocks);
+    const targetAfter = this.host.config.renumberOrderedLists ? renumberOrderedListMarkers(insertBlocksAtBoundary(
       targetContent,
       target.position,
       blocks.map(
@@ -3330,32 +3551,7 @@ var DragSessionManager = class extends import_obsidian6.Component {
         (block) => listIntent === null ? block.text : adjustListBlockIndent(block.text, target.targetLineText, listIntent)
       )
     );
-    if (sameDocument && session.sourceView !== target.editorView) {
-      session.sourceView.dispatch({
-        changes: { from: 0, to: session.sourceView.state.doc.length, insert: sourceAfter }
-      });
-      restoreEditorViewSnapshot(
-        session.sourceView,
-        sourceViewSnapshot,
-        (position) => mapPositionAfterMove(
-          sourceContent,
-          plannedBlocks,
-          target.position,
-          position
-        )
-      );
-      restoreFoldStarts(
-        session.sourceView,
-        sourceFoldStarts.map((start) => mapPositionAfterMove(
-          sourceContent,
-          plannedBlocks,
-          target.position,
-          start
-        ))
-      );
-      return;
-    }
-    const applied = this.applyMarkdownDocuments(
+    const applied = await this.applyMarkdownDocuments(
       session.sourceView,
       target.editorView,
       sourceContent,
@@ -3363,19 +3559,10 @@ var DragSessionManager = class extends import_obsidian6.Component {
       sourceAfter,
       targetAfter
     );
-    if (!applied) {
-      restoreEditorViewSnapshot(session.sourceView, sourceViewSnapshot);
-      return;
-    }
-    restoreEditorViewSnapshot(
-      session.sourceView,
-      sourceViewSnapshot,
-      (position) => sameDocument ? mapPositionAfterMove(sourceContent, plannedBlocks, target.position, position) : mapPositionAfterRemovals(position, sourceContent, blocks)
-    );
-    if (!this.host.config.preserveFoldState) return;
+    if (!applied || !this.host.config.preserveFoldState) return;
     restoreFoldStarts(
       session.sourceView,
-      sourceFoldStarts.map((start) => sameDocument ? mapPositionAfterMove(sourceContent, plannedBlocks, target.position, start) : mapPositionAfterRemovals(start, sourceContent, blocks))
+      sourceFoldStarts.map((start) => mapPositionAfterRemovals(start, sourceContent, blocks))
     );
     if (!sameDocument) {
       restoreFoldStarts(
@@ -3383,16 +3570,6 @@ var DragSessionManager = class extends import_obsidian6.Component {
         targetFoldStarts.map((start) => start >= target.position ? start + (targetAfter.length - targetContent.length) : start)
       );
     }
-  }
-  planOrderedListMove(content, blocks, targetPosition, targetLineText, listIntent) {
-    const moved = planStructuredMarkdownMove(
-      content,
-      blocks,
-      targetPosition,
-      targetLineText,
-      listIntent
-    );
-    return this.host.config.renumberOrderedLists ? renumberOrderedListMarkers(moved) : moved;
   }
   restoreEmbeddedFoldState(view, starts, sourceContent, idChanges, embeds, targetPosition) {
     if (!this.host.config.preserveFoldState || starts.length === 0) return;
@@ -3405,47 +3582,60 @@ var DragSessionManager = class extends import_obsidian6.Component {
   mapFoldStartsAfterInsertion(starts, content, position, blocks) {
     return starts.map((start) => start >= position ? start + (insertBlocksAtBoundary(content, position, blocks).length - content.length) : start);
   }
-  applyMarkdownDocuments(sourceView, targetView, sourceBefore, targetBefore, sourceAfter, targetAfter) {
+  async applyMarkdownDocuments(sourceView, targetView, sourceBefore, targetBefore, sourceAfter, targetAfter) {
     if (sourceView === targetView) {
       if (sourceAfter !== sourceBefore) {
-        sourceView.dispatch({
-          changes: { from: 0, to: sourceView.state.doc.length, insert: sourceAfter }
-        });
+        dispatchEditorChanges(sourceView, documentChanges(sourceBefore, sourceAfter));
       }
       return true;
     }
-    const targetChanged = targetAfter !== targetBefore;
-    const sourceChanged = sourceAfter !== sourceBefore;
+    const snapshots = /* @__PURE__ */ new Map([
+      [sourceView, captureEditorViewSnapshot(sourceView)],
+      [targetView, captureEditorViewSnapshot(targetView)]
+    ]);
+    const inverseChanges = /* @__PURE__ */ new Map();
+    const result = await runMarkdownTransaction([
+      { path: "target", before: targetBefore, after: targetAfter },
+      { path: "source", before: sourceBefore, after: sourceAfter }
+    ], {
+      apply: (mutation) => {
+        const view = mutation.path === "source" ? sourceView : targetView;
+        if (!this.isEditorWritable(view) || view.state.doc.toString() !== mutation.before) {
+          throw new Error("A note changed or closed during the Markdown drop.");
+        }
+        const changes = documentChanges(mutation.before, mutation.after);
+        inverseChanges.set(view, changes.invert(view.state.doc));
+        dispatchEditorChanges(view, changes);
+      },
+      rollback: (mutation) => {
+        const view = mutation.path === "source" ? sourceView : targetView;
+        if (!inverseChanges.has(view) || view.state.doc.toString() === mutation.before) return;
+        if (!this.isEditorWritable(view) || view.state.doc.toString() !== mutation.after) {
+          throw new Error("A note changed before rollback.");
+        }
+        const snapshot = snapshots.get(view);
+        const inverse = inverseChanges.get(view);
+        if (!snapshot || !inverse) throw new Error("Missing rollback snapshot.");
+        dispatchEditorChanges(view, inverse);
+        restoreEditorViewSnapshot(view, snapshot);
+      }
+    });
+    if (!result.ok) {
+      console.error("DragDrop could not apply a Markdown drop.", result.error);
+      new import_obsidian6.Notice(result.rollbackFailed ? "The Markdown drop failed and could not fully roll back. Check both notes." : "Could not complete the Markdown drop. Applied changes were rolled back.");
+    }
+    return result.ok;
+  }
+  applySameDocumentChanges(source, target, changes, mapPosition) {
+    if (!this.isEditorWritable(source) || !this.isEditorWritable(target)) {
+      throw new Error("A note is read-only or closed.");
+    }
+    const cancelSync = source !== target ? preserveEditorOnSync(target, changes, mapPosition) : void 0;
     try {
-      if (targetChanged) {
-        targetView.dispatch({
-          changes: { from: 0, to: targetView.state.doc.length, insert: targetAfter }
-        });
-      }
-      if (sourceChanged) {
-        sourceView.dispatch({
-          changes: { from: 0, to: sourceView.state.doc.length, insert: sourceAfter }
-        });
-      }
-      return true;
+      dispatchEditorChanges(source, changes, mapPosition);
     } catch (error) {
-      try {
-        if (sourceChanged) {
-          sourceView.dispatch({
-            changes: { from: 0, to: sourceView.state.doc.length, insert: sourceBefore }
-          });
-        }
-        if (targetChanged) {
-          targetView.dispatch({
-            changes: { from: 0, to: targetView.state.doc.length, insert: targetBefore }
-          });
-        }
-      } catch (rollbackError) {
-        console.error("DragDrop could not roll back a Markdown drop.", rollbackError);
-      }
-      console.error("DragDrop could not apply a Markdown drop.", error);
-      new import_obsidian6.Notice("Could not complete the Markdown drop. No content was moved.");
-      return false;
+      cancelSync?.();
+      throw error;
     }
   }
   blockIdChanges(units) {
@@ -3557,13 +3747,20 @@ var DragSessionManager = class extends import_obsidian6.Component {
       (path, file) => this.host.app.metadataCache.getFirstLinkpathDest(path, file.path)
     );
   }
-  planMarkdownReferences(state, units) {
-    const usedIds = /* @__PURE__ */ new Set();
-    const matches = state.doc.toString().matchAll(/\^([A-Za-z0-9-]+)/g);
-    for (const match of matches) usedIds.add(match[1]);
-    return units.map(
-      (unit) => directBlockEmbed(unit.text) ? unit : ensurePlannedReference(state, unit, usedIds)
-    );
+  markdownReferences(session) {
+    const references = this.planReferences(session.sourceState, session.units, session.sourceFile);
+    if (!references) throw new Error("An embedded block's source file could not be resolved.");
+    return references;
+  }
+  markdownReferenceTexts(references, target, plainLink) {
+    return references.map(({ file, subpath, unit }) => {
+      const linktext = this.host.app.metadataCache.fileToLinktext(file, target.path, true);
+      if (plainLink) return sourceBlockLink(linktext, subpath, this.host.config.crossMarkdownEmbedAlias);
+      const original = directBlockEmbed(unit.text);
+      const aliasStart = original?.indexOf("|") ?? -1;
+      const embed = sourceEmbedLink(linktext, subpath);
+      return original && aliasStart >= 0 ? `${embed.slice(0, -2)}${original.slice(aliasStart)}` : embed;
+    });
   }
   findMarkdownFile(view) {
     let result = null;
@@ -4134,7 +4331,7 @@ var CanvasSummaryFeature = class extends import_obsidian7.Component {
 };
 
 // src/editable-block-embed.ts
-var import_state4 = require("@codemirror/state");
+var import_state5 = require("@codemirror/state");
 var import_view3 = require("@codemirror/view");
 var import_obsidian8 = require("obsidian");
 
@@ -4394,7 +4591,7 @@ function isEditorView(value) {
   return isRecord3(value.state) && typeof value.dispatch === "function" && asElement(value.dom) !== null;
 }
 function isEditableEditor(view) {
-  return view.state.facet(import_state4.EditorState.readOnly) !== true && view.state.facet(import_view3.EditorView.editable) !== false;
+  return view.state.facet(import_state5.EditorState.readOnly) !== true && view.state.facet(import_view3.EditorView.editable) !== false;
 }
 function editorBlockText(view, id) {
   const location = findBlockLocation(view.state.doc.toString(), id);
@@ -5461,7 +5658,8 @@ var SelectionMenuFeature = class extends import_obsidian9.Component {
 var import_obsidian10 = require("obsidian");
 
 // src/settings-model.ts
-var SETTINGS_SCHEMA_VERSION = 3;
+var SETTINGS_SCHEMA_VERSION = 4;
+var DEFAULT_CROSS_MARKDOWN_EMBED_ALIAS = "\u{1F517}";
 var UNASSIGNED_MODIFIER = "unassigned";
 function assignedModifierForAction(bindings, action) {
   return MODIFIER_CHORDS.find((chord) => bindings[chord] === action) ?? UNASSIGNED_MODIFIER;
@@ -5495,6 +5693,7 @@ var DEFAULT_SETTINGS = {
   multiBlockSelection: true,
   blockTypeMenu: true,
   crossFileFileTargets: true,
+  crossMarkdownEmbedAlias: DEFAULT_CROSS_MARKDOWN_EMBED_ALIAS,
   edgeAutoScroll: true,
   autoScrollEdgePx: 60,
   autoScrollMaxSpeed: 12,
@@ -5545,12 +5744,18 @@ function normalizeSelectionMenuAutoDismissSeconds(value) {
   if (value < 0) return -1;
   return Math.min(3600, value);
 }
+function normalizeCrossMarkdownEmbedAlias(value) {
+  if (typeof value !== "string") return DEFAULT_CROSS_MARKDOWN_EMBED_ALIAS;
+  return normalizeEmbedAlias(value);
+}
 function migrateSettings(loaded) {
   const {
     protectedFolders,
+    crossMarkdownEmbedAlias: savedCrossMarkdownEmbedAlias,
     schemaVersion: savedSchemaVersion,
     ...rest
   } = loaded;
+  void savedCrossMarkdownEmbedAlias;
   const version = typeof savedSchemaVersion === "number" && Number.isFinite(savedSchemaVersion) ? Math.max(0, Math.trunc(savedSchemaVersion)) : 0;
   if (version < SETTINGS_SCHEMA_VERSION && protectedFolders !== void 0) {
     return {
@@ -5563,13 +5768,13 @@ function migrateSettings(loaded) {
     schemaVersion: SETTINGS_SCHEMA_VERSION
   };
 }
-function mergeMarkdownBindings(loaded) {
+function mergeMarkdownBindings(loaded, legacyLinks) {
   const bindings = {
     ...DEFAULT_SETTINGS.markdownBindings,
     ...loaded
   };
   for (const chord of Object.keys(bindings)) {
-    if (bindings[chord] === "link-source") {
+    if (legacyLinks && bindings[chord] === "link-source") {
       bindings[chord] = "embed-source";
     }
   }
@@ -5579,18 +5784,22 @@ function mergeSettings(loaded) {
   const loadedSettings = migrateSettings(loaded ?? {});
   const loadedMarkdownBindings = loaded?.markdownBindings;
   const loadedSameMarkdownBindings = loaded?.sameMarkdownBindings;
-  const markdownBindings = mergeMarkdownBindings(loadedMarkdownBindings);
+  const legacyLinks = typeof loaded?.schemaVersion !== "number" || loaded.schemaVersion < 4;
+  const markdownBindings = mergeMarkdownBindings(loadedMarkdownBindings, legacyLinks);
   const sameMarkdownBindings = mergeMarkdownBindings(
-    loadedSameMarkdownBindings ?? loadedMarkdownBindings
+    loadedSameMarkdownBindings ?? loadedMarkdownBindings,
+    legacyLinks
   );
-  const hasLegacyDefaults = loadedMarkdownBindings?.none === "move" && loadedMarkdownBindings.primary === "link-source" && loadedMarkdownBindings["primary+shift"] === "embed-source";
+  const hasLegacyDefaults = legacyLinks && loadedMarkdownBindings?.none === "move" && loadedMarkdownBindings.primary === "link-source" && loadedMarkdownBindings["primary+shift"] === "embed-source";
   if (hasLegacyDefaults) {
     markdownBindings.none = DEFAULT_SETTINGS.markdownBindings.none;
     markdownBindings.primary = DEFAULT_SETTINGS.markdownBindings.primary;
     markdownBindings["primary+shift"] = DEFAULT_SETTINGS.markdownBindings["primary+shift"];
-    sameMarkdownBindings.none = DEFAULT_SETTINGS.sameMarkdownBindings.none;
-    sameMarkdownBindings.primary = DEFAULT_SETTINGS.sameMarkdownBindings.primary;
-    sameMarkdownBindings["primary+shift"] = DEFAULT_SETTINGS.sameMarkdownBindings["primary+shift"];
+    if (!loadedSameMarkdownBindings) {
+      sameMarkdownBindings.none = DEFAULT_SETTINGS.sameMarkdownBindings.none;
+      sameMarkdownBindings.primary = DEFAULT_SETTINGS.sameMarkdownBindings.primary;
+      sameMarkdownBindings["primary+shift"] = DEFAULT_SETTINGS.sameMarkdownBindings["primary+shift"];
+    }
   }
   return {
     ...DEFAULT_SETTINGS,
@@ -5625,6 +5834,9 @@ function mergeSettings(loaded) {
     multiBlockSelection: typeof loaded?.multiBlockSelection === "boolean" ? loaded.multiBlockSelection : DEFAULT_SETTINGS.multiBlockSelection,
     blockTypeMenu: typeof loaded?.blockTypeMenu === "boolean" ? loaded.blockTypeMenu : DEFAULT_SETTINGS.blockTypeMenu,
     crossFileFileTargets: typeof loaded?.crossFileFileTargets === "boolean" ? loaded.crossFileFileTargets : DEFAULT_SETTINGS.crossFileFileTargets,
+    crossMarkdownEmbedAlias: normalizeCrossMarkdownEmbedAlias(
+      loaded?.crossMarkdownEmbedAlias
+    ),
     edgeAutoScroll: typeof loaded?.edgeAutoScroll === "boolean" ? loaded.edgeAutoScroll : DEFAULT_SETTINGS.edgeAutoScroll,
     autoScrollEdgePx: clampSavedInteger(
       loaded?.autoScrollEdgePx,
@@ -5672,12 +5884,13 @@ var EN_SETTINGS_TEXT = {
   crossMarkdownScope: "Drop into another Markdown file",
   canvasLinkAction: "Insert a link to the original block",
   canvasCreateAction: "Create a note from the block",
-  markdownEmbedAction: "Insert an embed of the original block",
+  markdownEmbedAction: "Insert a block embed (![[file#^block-id]])",
+  markdownLinkAction: "Insert an alias link ([[file#^block-id|alias]])",
   markdownMoveAction: "Move the block here",
   cancelDropAction: "Cancel this drop",
   canvasActionDescription: "Choose the modifier that performs this Canvas action. A modifier can be assigned to only one action in this group.",
-  sameMarkdownActionDescription: "Choose the modifier that performs this action when the source and destination are in the same Markdown file.",
-  crossMarkdownActionDescription: "Choose the modifier that performs this action when dropping into another Markdown file or onto a Markdown file target.",
+  sameMarkdownActionDescription: "Choose a modifier for this action inside the same file. Embed shows the block with ![[...]]; link inserts [[...|alias]]; move relocates the block.",
+  crossMarkdownActionDescription: "Choose a modifier for this action in another file. Embed shows the block with ![[...]]; link inserts [[...|alias]]; move removes the original after inserting it here.",
   folderStrategyName: "Created note location",
   folderStrategyDescription: "Choose where notes created by dragging to Canvas are stored.",
   folderFixed: "Use a fixed folder",
@@ -5721,7 +5934,7 @@ var EN_SETTINGS_TEXT = {
   touchDropActionName: "Touch drop action",
   touchDropActionDescription: "Action used for finger or pen drops when no keyboard modifier is available.",
   surfacePenName: "Surface Pen side-button drag",
-  surfacePenDescription: "Use the Surface Pen side button to drag Markdown handles and select on Canvas. Without the side button, the pen pans Canvas regardless of this setting.",
+  surfacePenDescription: "Use the Surface Pen side button to drag Markdown handles and select on Canvas. Markdown drops use the saved modifier bindings, including No modifier when no keyboard key is pressed. Without the side button, the pen pans Canvas regardless of this setting.",
   largerTouchHandlesName: "Larger touch handles",
   largerTouchHandlesDescription: "Use 44 x 44 touch targets for Markdown handles on touch-oriented devices.",
   mobileInteractionsName: "Mobile block selection",
@@ -5729,11 +5942,14 @@ var EN_SETTINGS_TEXT = {
   selectionMenuTimeoutName: "Text selection menu timeout",
   selectionMenuTimeoutDescription: "Set -1 to use Obsidian's normal menu, 0 to hide the menu, or a positive number of seconds (including decimals such as 0.7) to close it when it is not hovered.",
   editableEmbedsName: "Edit embedded blocks",
-  editableEmbedsDescription: "Edit a Markdown block inside a ![[file#^block-id]] embed and write changes back to the original block. Requires an Obsidian reload.",
+  editableEmbedsDescription: "Edit the source block shown by ![[file#^block-id]] and write changes back to that block. Requires an Obsidian reload.",
   blockMenuName: "Block action menu",
   blockMenuDescription: "Show Copy, Cut, and Delete when a Markdown block handle is right-clicked.",
   crossFileTargetsName: "Markdown file drop targets",
-  crossFileTargetsDescription: "Allow dropping onto Markdown files in the file tree or onto internal links to append content at the end.",
+  crossFileTargetsDescription: "Allow dropping onto a Markdown file in the file tree or an internal link. Dropped content is added at the end of that file.",
+  crossMarkdownEmbedAliasName: "Block link alias",
+  crossMarkdownEmbedAliasDescription: "Display text for the Insert an alias link action: [[file#^block-id|alias]]. Emoji such as \u{1F517} or \u{1F4CC} are valid. Leave empty for [[file#^block-id]]. Assign a modifier to this action above to use it.",
+  crossMarkdownEmbedAliasPlaceholder: "\u{1F517} or Source",
   edgeAutoScrollName: "Auto-scroll while dragging",
   edgeAutoScrollDescription: "Scroll the Markdown editor when a drag is held near an edge.",
   preserveFoldStateName: "Preserve folded sections",
@@ -5766,12 +5982,13 @@ var ZH_SETTINGS_TEXT = {
   crossMarkdownScope: "\u62D6\u653E\u5230\u53E6\u4E00\u4E2A Markdown \u6587\u4EF6",
   canvasLinkAction: "\u63D2\u5165\u6307\u5411\u539F\u5757\u7684\u94FE\u63A5",
   canvasCreateAction: "\u6839\u636E\u539F\u5757\u521B\u5EFA\u7B14\u8BB0",
-  markdownEmbedAction: "\u63D2\u5165\u539F\u5757\u7684\u5D4C\u5165",
+  markdownEmbedAction: "\u63D2\u5165\u5757\u5D4C\u5165\uFF08![[\u6587\u4EF6#^\u5757ID]]\uFF09",
+  markdownLinkAction: "\u63D2\u5165\u522B\u540D\u53CC\u94FE\uFF08[[\u6587\u4EF6#^\u5757ID|\u522B\u540D]]\uFF09",
   markdownMoveAction: "\u628A\u539F\u5757\u79FB\u52A8\u5230\u8FD9\u91CC",
   cancelDropAction: "\u53D6\u6D88\u672C\u6B21\u62D6\u653E",
   canvasActionDescription: "\u9009\u62E9\u6267\u884C\u6B64 Canvas \u52A8\u4F5C\u65F6\u4F7F\u7528\u7684\u4FEE\u9970\u952E\u3002\u540C\u4E00\u7EC4\u5185\uFF0C\u4E00\u4E2A\u4FEE\u9970\u952E\u53EA\u80FD\u5206\u914D\u7ED9\u4E00\u4E2A\u52A8\u4F5C\u3002",
-  sameMarkdownActionDescription: "\u9009\u62E9\u6E90\u4F4D\u7F6E\u548C\u76EE\u6807\u4F4D\u7F6E\u5728\u540C\u4E00\u4E2A Markdown \u6587\u4EF6\u5185\u65F6\uFF0C\u6267\u884C\u6B64\u52A8\u4F5C\u6240\u4F7F\u7528\u7684\u4FEE\u9970\u952E\u3002",
-  crossMarkdownActionDescription: "\u9009\u62E9\u62D6\u653E\u5230\u53E6\u4E00\u4E2A Markdown \u6587\u4EF6\u6216 Markdown \u6587\u4EF6\u76EE\u6807\u65F6\uFF0C\u6267\u884C\u6B64\u52A8\u4F5C\u6240\u4F7F\u7528\u7684\u4FEE\u9970\u952E\u3002",
+  sameMarkdownActionDescription: "\u9009\u62E9\u5728\u540C\u4E00\u4E2A\u6587\u4EF6\u5185\u6267\u884C\u6B64\u52A8\u4F5C\u7684\u4FEE\u9970\u952E\u3002\u5D4C\u5165\u7528 ![[...]] \u663E\u793A\u539F\u5757\u5185\u5BB9\uFF1B\u53CC\u94FE\u7528 [[...|\u522B\u540D]] \u663E\u793A\u94FE\u63A5\u6587\u5B57\uFF1B\u79FB\u52A8\u4F1A\u628A\u539F\u5757\u79FB\u5230\u76EE\u6807\u4F4D\u7F6E\u3002",
+  crossMarkdownActionDescription: "\u9009\u62E9\u62D6\u5230\u53E6\u4E00\u4E2A\u6587\u4EF6\u65F6\u6267\u884C\u6B64\u52A8\u4F5C\u7684\u4FEE\u9970\u952E\u3002\u5D4C\u5165\u7528 ![[...]] \u663E\u793A\u539F\u5757\u5185\u5BB9\uFF1B\u53CC\u94FE\u7528 [[...|\u522B\u540D]] \u663E\u793A\u94FE\u63A5\u6587\u5B57\uFF1B\u79FB\u52A8\u4F1A\u5728\u76EE\u6807\u63D2\u5165\u5185\u5BB9\u540E\u5220\u9664\u539F\u5757\u3002",
   folderStrategyName: "\u65B0\u7B14\u8BB0\u4FDD\u5B58\u4F4D\u7F6E",
   folderStrategyDescription: "\u9009\u62E9\u62D6\u653E\u5230 Canvas \u65F6\u6240\u521B\u5EFA\u7B14\u8BB0\u7684\u4FDD\u5B58\u4F4D\u7F6E\u3002",
   folderFixed: "\u4F7F\u7528\u56FA\u5B9A\u6587\u4EF6\u5939",
@@ -5815,7 +6032,7 @@ var ZH_SETTINGS_TEXT = {
   touchDropActionName: "\u89E6\u63A7\u62D6\u653E\u52A8\u4F5C",
   touchDropActionDescription: "\u624B\u6307\u6216\u624B\u5199\u7B14\u65E0\u6CD5\u4F7F\u7528\u952E\u76D8\u4FEE\u9970\u952E\u65F6\u6267\u884C\u7684\u52A8\u4F5C\u3002",
   surfacePenName: "Surface Pen \u4FA7\u952E\u62D6\u62FD",
-  surfacePenDescription: "\u5728 Markdown \u6293\u624B\u4E0A\u6309\u4F4F Surface Pen \u4FA7\u952E\u65F6\u6B63\u5E38\u62D6\u62FD\uFF1B\u5728 Canvas \u4E0A\u6309\u4F4F\u4FA7\u952E\u65F6\u9009\u4E2D\uFF0C\u672A\u6309\u4FA7\u952E\u65F6\u7B14\u5C16\u59CB\u7EC8\u5E73\u79FB\u753B\u5E03\u3002",
+  surfacePenDescription: "\u5728 Markdown \u6293\u624B\u4E0A\u6309\u4F4F Surface Pen \u4FA7\u952E\u65F6\u62D6\u62FD\uFF0C\u6309\u4F60\u8BBE\u7F6E\u7684\u4FEE\u9970\u952E\u6267\u884C\u52A8\u4F5C\uFF1B\u672A\u6309\u952E\u76D8\u6309\u952E\u65F6\u4F7F\u7528\u201C\u65E0\u4FEE\u9970\u952E\u201D\u8BBE\u7F6E\u3002\u5728 Canvas \u4E0A\u6309\u4F4F\u4FA7\u952E\u65F6\u9009\u4E2D\uFF0C\u672A\u6309\u4FA7\u952E\u65F6\u7B14\u5C16\u59CB\u7EC8\u5E73\u79FB\u753B\u5E03\u3002",
   largerTouchHandlesName: "\u52A0\u5927\u89E6\u63A7\u6293\u624B",
   largerTouchHandlesDescription: "\u5728\u89E6\u63A7\u8BBE\u5907\u4E0A\u4E3A Markdown \u6293\u624B\u4F7F\u7528 44 \xD7 44 \u7684\u89E6\u63A7\u533A\u57DF\u3002",
   mobileInteractionsName: "\u79FB\u52A8\u7AEF\u591A\u5757\u9009\u62E9",
@@ -5823,11 +6040,14 @@ var ZH_SETTINGS_TEXT = {
   selectionMenuTimeoutName: "\u6587\u5B57\u9009\u533A\u83DC\u5355\u81EA\u52A8\u6D88\u5931\u79D2\u6570",
   selectionMenuTimeoutDescription: "\u8BBE\u4E3A -1 \u65F6\u4FDD\u7559 Obsidian \u539F\u6709\u83DC\u5355\uFF1B\u8BBE\u4E3A 0 \u65F6\u4E0D\u663E\u793A\u9009\u533A\u83DC\u5355\uFF1B\u8BBE\u4E3A\u6B63\u6570\u79D2\u6570\u65F6\uFF08\u53EF\u4F7F\u7528\u5C0F\u6570\uFF0C\u4F8B\u5982 0.7\uFF09\uFF0C\u83DC\u5355\u672A\u88AB\u60AC\u505C\u6307\u5B9A\u79D2\u6570\u540E\u81EA\u52A8\u5173\u95ED\u3002",
   editableEmbedsName: "\u7F16\u8F91\u5D4C\u5165\u5757",
-  editableEmbedsDescription: "\u76F4\u63A5\u7F16\u8F91 ![[\u6587\u4EF6#^\u5757ID]] \u4E2D\u7684 Markdown \u5757\uFF0C\u5E76\u628A\u4FEE\u6539\u5199\u56DE\u539F\u5757\u3002\u4FEE\u6539\u6B64\u9879\u540E\u9700\u8981\u91CD\u8F7D Obsidian\u3002",
+  editableEmbedsDescription: "\u76F4\u63A5\u7F16\u8F91 ![[\u6587\u4EF6#^\u5757ID]] \u663E\u793A\u7684\u539F Markdown \u5757\uFF0C\u5E76\u628A\u4FEE\u6539\u5199\u56DE\u8FD9\u4E2A\u5757\u3002\u4FEE\u6539\u6B64\u9879\u540E\u9700\u8981\u91CD\u8F7D Obsidian\u3002",
   blockMenuName: "\u5757\u64CD\u4F5C\u83DC\u5355",
   blockMenuDescription: "\u53F3\u51FB Markdown \u5757\u6293\u624B\u65F6\u663E\u793A\u590D\u5236\u3001\u526A\u5207\u548C\u5220\u9664\u64CD\u4F5C\u3002",
   crossFileTargetsName: "Markdown \u6587\u4EF6\u62D6\u653E\u76EE\u6807",
   crossFileTargetsDescription: "\u5141\u8BB8\u628A\u5185\u5BB9\u62D6\u5230\u6587\u4EF6\u5217\u8868\u4E2D\u7684 Markdown \u6587\u4EF6\u6216\u6B63\u6587\u5185\u90E8\u94FE\u63A5\uFF0C\u5E76\u8FFD\u52A0\u5230\u76EE\u6807\u6587\u4EF6\u672B\u5C3E\u3002",
+  crossMarkdownEmbedAliasName: "\u5757\u53CC\u94FE\u522B\u540D",
+  crossMarkdownEmbedAliasDescription: "\u201C\u63D2\u5165\u522B\u540D\u53CC\u94FE\u201D\u52A8\u4F5C\u663E\u793A\u7684\u94FE\u63A5\u6587\u5B57\uFF1A[[\u6587\u4EF6#^\u5757ID|\u522B\u540D]]\u3002\u53EF\u586B emoji\uFF08\u5982 \u{1F517}\u3001\u{1F4CC}\uFF09\u6216\u6587\u5B57\uFF1B\u7559\u7A7A\u5219\u4F7F\u7528 [[\u6587\u4EF6#^\u5757ID]]\u3002\u5728\u4E0A\u65B9\u4E3A\u8BE5\u52A8\u4F5C\u5206\u914D\u4FEE\u9970\u952E\u540E\u751F\u6548\u3002",
+  crossMarkdownEmbedAliasPlaceholder: "\u{1F517} \u6216 \u6765\u6E90",
   edgeAutoScrollName: "\u62D6\u62FD\u65F6\u81EA\u52A8\u6EDA\u52A8",
   edgeAutoScrollDescription: "\u62D6\u62FD\u505C\u7559\u5728 Markdown \u7F16\u8F91\u5668\u8FB9\u7F18\u65F6\u81EA\u52A8\u6EDA\u52A8\u3002",
   preserveFoldStateName: "\u4FDD\u7559\u6298\u53E0\u72B6\u6001",
@@ -5852,6 +6072,7 @@ var CANVAS_BINDING_ACTIONS = [
 ];
 var MARKDOWN_BINDING_ACTIONS = [
   "embed-source",
+  "link-source",
   "move",
   "none"
 ];
@@ -5882,6 +6103,8 @@ function markdownActionLabel(action, text) {
   switch (action) {
     case "embed-source":
       return text.markdownEmbedAction;
+    case "link-source":
+      return text.markdownLinkAction;
     case "move":
       return text.markdownMoveAction;
     case "none":
@@ -6176,6 +6399,15 @@ var DragDropSettingTab = class extends import_obsidian10.PluginSettingTab {
             control: { type: "toggle", key: "crossFileFileTargets" }
           },
           {
+            name: text.crossMarkdownEmbedAliasName,
+            desc: text.crossMarkdownEmbedAliasDescription,
+            control: {
+              type: "text",
+              key: "crossMarkdownEmbedAlias",
+              placeholder: text.crossMarkdownEmbedAliasPlaceholder
+            }
+          },
+          {
             name: text.edgeAutoScrollName,
             desc: text.edgeAutoScrollDescription,
             control: { type: "toggle", key: "edgeAutoScroll" }
@@ -6323,6 +6555,8 @@ var DragDropSettingTab = class extends import_obsidian10.PluginSettingTab {
         return this.host.config.blockTypeMenu;
       case "crossFileFileTargets":
         return this.host.config.crossFileFileTargets;
+      case "crossMarkdownEmbedAlias":
+        return this.host.config.crossMarkdownEmbedAlias;
       case "edgeAutoScroll":
         return this.host.config.edgeAutoScroll;
       case "autoScrollEdgePx":
@@ -6453,6 +6687,10 @@ var DragDropSettingTab = class extends import_obsidian10.PluginSettingTab {
       case "crossFileFileTargets":
         if (typeof value !== "boolean") return;
         this.host.config.crossFileFileTargets = value;
+        break;
+      case "crossMarkdownEmbedAlias":
+        if (typeof value !== "string") return;
+        this.host.config.crossMarkdownEmbedAlias = normalizeCrossMarkdownEmbedAlias(value);
         break;
       case "edgeAutoScroll":
         if (typeof value !== "boolean") return;

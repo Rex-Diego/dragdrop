@@ -26,6 +26,7 @@ export type TouchDropAction = Exclude<CanvasDropAction, "inherit">;
 export type MarkdownDropAction =
   | "inherit"
   | "embed-source"
+  | "link-source"
   | "move"
   | "none";
 
@@ -60,6 +61,12 @@ export interface SourceUnit {
   hasListChildren?: boolean;
   anchorFrom?: number;
   anchorTo?: number;
+  /**
+   * Position used when a block ID is inserted. This is intentionally
+   * separate from anchorTo: a list-tree may reference the complete subtree
+   * while its ID belongs on the root list item's line.
+   */
+  blockIdAnchorTo?: number;
   blockIdPlacement?: "inline" | "standalone";
   selfOnlyText?: string;
 }

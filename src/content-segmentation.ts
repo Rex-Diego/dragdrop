@@ -83,7 +83,7 @@ function createPrimitive(
   const to = doc.line(lineTo).to;
   const text = doc.sliceString(from, to);
   const openingId =
-    kind === "quote" || kind === "callout"
+    kind === "quote" || kind === "callout" || kind === "list-item"
       ? openingLineBlockId(text)
       : undefined;
   const quotedBlockId =
@@ -326,19 +326,23 @@ function combineListRun(state: EditorState, run: PrimitiveBlock[]): SourceUnit {
   const first = run[0];
   const last = run.at(-1) ?? first;
   const text = state.doc.sliceString(first.from, last.to);
+  const rootLineEnd = state.doc.line(first.lineFrom).to;
   return {
     ...first,
     kind: "list-tree",
     from: first.from,
     to: last.to,
     text,
+    // A whole list tree is addressed by its root item. Do not accidentally
+    // reuse a child ID from the end of the selected subtree.
     existingBlockId:
-      existingBlockId(text) ??
+      openingLineBlockId(first.text) ??
       standaloneBlockIdAfter(state.doc, last.anchorTo ?? last.to),
     hasListChildren: run.length > 1,
     anchorFrom: first.from,
     anchorTo: last.anchorTo ?? last.to,
-    blockIdPlacement: "standalone",
+    blockIdAnchorTo: rootLineEnd,
+    blockIdPlacement: "inline",
     selfOnlyText: withoutTrailingBlockId(first.text.split("\n", 1)[0] ?? first.text),
   };
 }
@@ -359,9 +363,14 @@ function groupLists(
         ...block,
         anchorTo,
         existingBlockId: standalone
-          ? standaloneBlockIdAfter(state.doc, anchorTo) ?? block.existingBlockId
+          ? block.existingBlockId ?? standaloneBlockIdAfter(state.doc, anchorTo)
           : block.existingBlockId,
-        blockIdPlacement: standalone ? "standalone" : "inline",
+        // The referenced range may include the complete native subtree, but
+        // the marker itself belongs to the root list item line.
+        // Even a list item with lazy continuation text is identified by its
+        // marker line, not by the end of that continuation range.
+        blockIdAnchorTo: state.doc.line(block.lineFrom).to,
+        blockIdPlacement: "inline",
       };
     });
   }

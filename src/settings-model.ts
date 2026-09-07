@@ -8,8 +8,10 @@ import type {
   TitleFilenameMode,
 } from "./model";
 import { MODIFIER_CHORDS } from "./model";
+import { normalizeEmbedAlias } from "./block-reference";
 
-export const SETTINGS_SCHEMA_VERSION = 3;
+export const SETTINGS_SCHEMA_VERSION = 4;
+export const DEFAULT_CROSS_MARKDOWN_EMBED_ALIAS = "🔗";
 export type HandlePosition = "left" | "right";
 export type HandleVisibility = "hover" | "always";
 
@@ -32,6 +34,7 @@ export interface DragDropSettings {
   multiBlockSelection: boolean;
   blockTypeMenu: boolean;
   crossFileFileTargets: boolean;
+  crossMarkdownEmbedAlias: string;
   edgeAutoScroll: boolean;
   autoScrollEdgePx: number;
   autoScrollMaxSpeed: number;
@@ -92,6 +95,7 @@ export const DEFAULT_SETTINGS: DragDropSettings = {
   multiBlockSelection: true,
   blockTypeMenu: true,
   crossFileFileTargets: true,
+  crossMarkdownEmbedAlias: DEFAULT_CROSS_MARKDOWN_EMBED_ALIAS,
   edgeAutoScroll: true,
   autoScrollEdgePx: 60,
   autoScrollMaxSpeed: 12,
@@ -134,9 +138,13 @@ export const DEFAULT_SETTINGS: DragDropSettings = {
   },
 };
 
-type LegacySettings = Omit<Partial<DragDropSettings>, "schemaVersion"> & {
+type LegacySettings = Omit<
+  Partial<DragDropSettings>,
+  "schemaVersion" | "crossMarkdownEmbedAlias"
+> & {
   protectedFolders?: unknown;
   schemaVersion?: unknown;
+  crossMarkdownEmbedAlias?: unknown;
 };
 
 function clampSavedInteger(
@@ -155,12 +163,25 @@ export function normalizeSelectionMenuAutoDismissSeconds(value: unknown): number
   return Math.min(3_600, value);
 }
 
+/**
+ * Normalize the optional label used by Markdown block links.
+ * Unicode, including emoji, is preserved; only wikilink delimiters and line
+ * breaks are removed so the saved value cannot produce malformed Markdown.
+ */
+export function normalizeCrossMarkdownEmbedAlias(value: unknown): string {
+  if (typeof value !== "string") return DEFAULT_CROSS_MARKDOWN_EMBED_ALIAS;
+  return normalizeEmbedAlias(value);
+}
+
 function migrateSettings(loaded: LegacySettings): Partial<DragDropSettings> {
   const {
     protectedFolders,
+    crossMarkdownEmbedAlias: savedCrossMarkdownEmbedAlias,
     schemaVersion: savedSchemaVersion,
     ...rest
   } = loaded;
+
+  void savedCrossMarkdownEmbedAlias;
 
   const version =
     typeof savedSchemaVersion === "number" && Number.isFinite(savedSchemaVersion)
@@ -183,13 +204,14 @@ function migrateSettings(loaded: LegacySettings): Partial<DragDropSettings> {
 
 function mergeMarkdownBindings(
   loaded: Record<string, unknown> | undefined,
+  legacyLinks: boolean,
 ): Record<ModifierChord, MarkdownDropAction> {
   const bindings = {
     ...DEFAULT_SETTINGS.markdownBindings,
     ...loaded,
   };
   for (const chord of Object.keys(bindings) as ModifierChord[]) {
-    if ((bindings[chord] as unknown) === "link-source") {
+    if (legacyLinks && bindings[chord] === "link-source") {
       bindings[chord] = "embed-source";
     }
   }
@@ -206,11 +228,14 @@ export function mergeSettings(
   const loadedSameMarkdownBindings = loaded?.sameMarkdownBindings as
     | Record<string, unknown>
     | undefined;
-  const markdownBindings = mergeMarkdownBindings(loadedMarkdownBindings);
+  const legacyLinks = typeof loaded?.schemaVersion !== "number" || loaded.schemaVersion < 4;
+  const markdownBindings = mergeMarkdownBindings(loadedMarkdownBindings, legacyLinks);
   const sameMarkdownBindings = mergeMarkdownBindings(
     loadedSameMarkdownBindings ?? loadedMarkdownBindings,
+    legacyLinks,
   );
   const hasLegacyDefaults =
+    legacyLinks &&
     loadedMarkdownBindings?.none === "move" &&
     loadedMarkdownBindings.primary === "link-source" &&
     loadedMarkdownBindings["primary+shift"] === "embed-source";
@@ -218,9 +243,11 @@ export function mergeSettings(
     markdownBindings.none = DEFAULT_SETTINGS.markdownBindings.none;
     markdownBindings.primary = DEFAULT_SETTINGS.markdownBindings.primary;
     markdownBindings["primary+shift"] = DEFAULT_SETTINGS.markdownBindings["primary+shift"];
-    sameMarkdownBindings.none = DEFAULT_SETTINGS.sameMarkdownBindings.none;
-    sameMarkdownBindings.primary = DEFAULT_SETTINGS.sameMarkdownBindings.primary;
-    sameMarkdownBindings["primary+shift"] = DEFAULT_SETTINGS.sameMarkdownBindings["primary+shift"];
+    if (!loadedSameMarkdownBindings) {
+      sameMarkdownBindings.none = DEFAULT_SETTINGS.sameMarkdownBindings.none;
+      sameMarkdownBindings.primary = DEFAULT_SETTINGS.sameMarkdownBindings.primary;
+      sameMarkdownBindings["primary+shift"] = DEFAULT_SETTINGS.sameMarkdownBindings["primary+shift"];
+    }
   }
 
   return {
@@ -286,6 +313,9 @@ export function mergeSettings(
       typeof loaded?.crossFileFileTargets === "boolean"
         ? loaded.crossFileFileTargets
         : DEFAULT_SETTINGS.crossFileFileTargets,
+    crossMarkdownEmbedAlias: normalizeCrossMarkdownEmbedAlias(
+      loaded?.crossMarkdownEmbedAlias,
+    ),
     edgeAutoScroll:
       typeof loaded?.edgeAutoScroll === "boolean"
         ? loaded.edgeAutoScroll

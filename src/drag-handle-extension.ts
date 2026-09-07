@@ -6,6 +6,7 @@ import { setIcon } from "obsidian";
 import { buildHandleRanges } from "./content-segmentation";
 import type { HandleRange } from "./content-segmentation";
 import { calloutGutterOffset } from "./callout-handle-position";
+import { restorePendingEditorSync } from "./editor-view-state";
 
 export interface DragStarter {
   openHandleMenu(
@@ -331,6 +332,7 @@ export function createDragHandleExtension(starter: DragStarter): Extension {
     }),
     createGutterHoverExtension(),
     EditorView.updateListener.of((update) => {
+      restorePendingEditorSync(update);
       if (update.docChanged || update.viewportChanged || update.geometryChanged) {
         scheduleCalloutGutterAlignment(update.view);
       }

@@ -1,4 +1,4 @@
-import { EditorState } from "@codemirror/state";
+import { EditorState, ChangeSet } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import {
   Component,
@@ -16,9 +16,14 @@ import {
   resolveMarkdownDropAction,
   resolveMarkdownDropActionForContext,
   type MarkdownDropContext,
+  type ModifierKeyState,
   type ResolvedMarkdownDropAction,
 } from "./action-resolution";
-import { applyBlockIdInsertions, ensurePlannedReference, sourceSubpath } from "./block-reference";
+import {
+  applyBlockIdInsertions,
+  sourceEmbedLink,
+  sourceBlockLink,
+} from "./block-reference";
 import { CanvasAdapter, type CanvasDropTarget, type CanvasItemSpec } from "./canvas-adapter";
 import { planCanvasReferences, type CanvasReference } from "./canvas-reference";
 import { buildHandleRanges, collectSourceUnits, previewMarkdownForUnits } from "./content-segmentation";
@@ -39,11 +44,12 @@ import {
   applyTextChanges,
   chooseMarkdownDropPosition,
   collectMarkdownDropBoundaryPositions,
+  boundaryInsertionForBlocks,
   directBlockEmbed,
   insertBlocksAtBoundary,
   mapPositionAfterChanges,
   mapPositionAfterInsertion,
-  mapPositionAfterMove,
+  planMarkdownMoveChanges,
   mapPositionAfterRemovals,
   removeTextRanges,
   requiresMoveConfirmation,
@@ -52,7 +58,6 @@ import {
 import {
   findMoveTargetIssue,
   adjustListBlockIndent,
-  planStructuredMarkdownMove,
   renumberOrderedListMarkers,
   resolveListDropIntent,
   structuredMoveBlocks,
@@ -62,18 +67,24 @@ import {
 import { captureFoldStarts, restoreFoldStarts } from "./fold-state";
 import {
   captureEditorViewSnapshot,
+  dispatchEditorChanges,
+  documentChanges,
   restoreEditorViewSnapshot,
+  preserveEditorOnSync,
 } from "./editor-view-state";
 import { modifierChordFromEvent, type DragSession, type SourceUnit } from "./model";
 import {
   canvasPenButtonForInteraction,
   canvasPenButtonsForButton,
   canvasPenInteractionForEvent,
+  CANVAS_NATIVE_HIT_SELECTOR,
   createCanvasPointerEventInit,
   hasCrossedPointerDragThreshold,
+  isCanvasNativeControlElement,
   isSurfacePenSideButton,
   isPointInsidePointerRect,
   matchesPointerDrag,
+  shouldStartMobileBlockSelection,
 } from "./pointer-drag";
 import type { DragDropSettings } from "./settings-model";
 import { isCanvasView, type CanvasView } from "./canvas-types";
@@ -157,6 +168,12 @@ interface MarkdownDropTarget {
 interface MarkdownFileDropTarget {
   file: TFile;
   ownerDocument: Document;
+}
+
+type PointerDropTarget = CanvasDropTarget | MarkdownDropTarget;
+
+function isMarkdownDropTarget(target: PointerDropTarget | null): target is MarkdownDropTarget {
+  return target !== null && "editorView" in target;
 }
 
 function isDocumentLike(value: unknown): value is Document {
@@ -419,6 +436,7 @@ export class DragSessionManager extends Component implements DragStarter {
     if (
       this.host.config.mobileBlockInteractions &&
       this.host.config.multiBlockSelection &&
+      shouldStartMobileBlockSelection(event.pointerType) &&
       !sideButton
     ) {
       const ownerWindow = element.ownerDocument.defaultView;
@@ -482,8 +500,26 @@ export class DragSessionManager extends Component implements DragStarter {
     }
 
     const target = this.findPointerDropTarget(pointerDrag, event);
+    let targetValid = target !== null;
+    if (isMarkdownDropTarget(target)) {
+      const modifierState = event;
+      const action = this.resolveMarkdownActionForTarget(modifierState, target.context);
+      this.cacheMarkdownAction(
+        action,
+        modifierState,
+        target.file,
+        target.ownerDocument,
+        target.context,
+      );
+      targetValid = action !== "none" && !(action === "move" && target.issue !== null);
+      if (targetValid) this.showMarkdownDropLine(target);
+      else this.hideMarkdownDropLine();
+      this.updateAutoScroll(target, event.clientX, event.clientY, action);
+    } else {
+      this.clearMarkdownDropTarget();
+    }
     this.moveGhostTo(event.clientX + 16, event.clientY + 16);
-    this.ghostElement?.toggleClass("dragdrop-ghost-valid", target !== null);
+    this.ghostElement?.toggleClass("dragdrop-ghost-valid", targetValid);
   }
 
   async endPointerDrag(event: PointerEvent): Promise<void> {
@@ -512,6 +548,21 @@ export class DragSessionManager extends Component implements DragStarter {
       this.cleanupDrag();
       return;
     }
+    if (isMarkdownDropTarget(target)) {
+      const modifierState = event;
+      await this.commitMarkdownDrop(
+        session,
+        target,
+        this.cachedMarkdownAction(
+          modifierState,
+          target.file,
+          target.ownerDocument,
+          target.context,
+        ),
+      );
+      return;
+    }
+
     await this.commitDrop(
       session,
       target,
@@ -864,18 +915,21 @@ export class DragSessionManager extends Component implements DragStarter {
   private findPointerDropTarget(
     pointerDrag: PointerDrag,
     event: PointerEvent,
-  ): CanvasDropTarget | null {
-    return this.canvasAdapter.findDropTargetAt({
+  ): PointerDropTarget | null {
+    const point = {
       ownerDocument: pointerDrag.element.ownerDocument,
       x: event.clientX,
       y: event.clientY,
-    });
+    };
+    const canvasTarget = this.canvasAdapter.findDropTargetAt(point);
+    if (canvasTarget) return canvasTarget;
+    return this.findMarkdownDropTarget(event);
   }
 
-  private findMarkdownDropTarget(event: DragEvent): MarkdownDropTarget | null {
+  private findMarkdownDropTarget(event: DragEvent | PointerEvent): MarkdownDropTarget | null {
     const eventTarget = isNodeLike(event.target) ? event.target : null;
     const ownerDocument = eventTarget?.ownerDocument ?? activeDocument;
-    const path = event.composedPath();
+    const path = "pointerId" in event ? [] : event.composedPath();
     const pointElement = ownerDocument.elementFromPoint(event.clientX, event.clientY);
     const candidates: MarkdownView[] = [];
 
@@ -888,18 +942,18 @@ export class DragSessionManager extends Component implements DragStarter {
       candidates.push(view);
     });
 
-    const view = candidates.find((candidate) => {
-      if (path.includes(candidate.containerEl)) return true;
-      return pointElement ? candidate.containerEl.contains(pointElement) : false;
-    });
+    const view = candidates.find((candidate) =>
+      pointElement !== null && candidate.containerEl.contains(pointElement),
+    ) ?? candidates.find((candidate) => path.includes(candidate.containerEl));
     if (!view || !(view.file instanceof TFile)) return null;
 
     const editorElement = view.containerEl.querySelector(".cm-editor");
     if (!editorElement) return null;
     const editorView = EditorView.findFromDOM(editorElement as HTMLElement);
     if (!editorView || editorView.dom.ownerDocument !== ownerDocument) return null;
+    if (!pointElement || !editorView.dom.contains(pointElement)) return null;
 
-    const position = this.markdownDropPosition(editorView, event);
+    let position = this.markdownDropPosition(editorView, event);
     const rawPosition = editorView.posAtCoords({ x: event.clientX, y: event.clientY }) ?? position;
     const targetLine = editorView.state.doc.lineAt(rawPosition);
     const sourceText = this.session?.units[0]?.text ?? "";
@@ -910,6 +964,13 @@ export class DragSessionManager extends Component implements DragStarter {
       pointerColumn: rawPosition - targetLine.from,
       contextLineNumber: targetLine.number,
     });
+    const context = sameSourceFile ? "same-file" : "cross-file";
+    if (this.host.config.structuralMarkdownMoves && listIntent?.mode === "child" &&
+      this.resolveMarkdownActionForTarget(event, context) === "move") {
+      // A right-side drop belongs below the target subtree, even when the
+      // nearest vertical boundary happens to be above its parent line.
+      position = buildHandleRanges(editorView.state).find((range) => range.from === targetLine.from)?.to ?? targetLine.to;
+    }
 
     return {
       view,
@@ -924,7 +985,7 @@ export class DragSessionManager extends Component implements DragStarter {
         sameSourceFile ? this.session?.units ?? [] : [],
         position,
       ),
-      context: sameSourceFile ? "same-file" : "cross-file",
+      context,
       ownerDocument,
     };
   }
@@ -966,7 +1027,7 @@ export class DragSessionManager extends Component implements DragStarter {
     return null;
   }
 
-  private markdownDropPosition(editorView: EditorView, event: DragEvent): number {
+  private markdownDropPosition(editorView: EditorView, event: DragEvent | PointerEvent): number {
     return this.markdownDropPositionAt(editorView, event.clientX, event.clientY);
   }
 
@@ -1391,9 +1452,7 @@ export class DragSessionManager extends Component implements DragStarter {
   }
 
   private isCanvasControl(element: Element): boolean {
-    return element.closest(
-      ".canvas-menu, .canvas-card-menu, .canvas-node-resizer, .canvas-node-connection-point, .canvas-edge, .canvas-interaction-path, .canvas-display-path, .canvas-path-label, .canvas-path-label-wrapper, button, input, textarea, select",
-    ) !== null;
+    return isCanvasNativeControlElement(element);
   }
 
   private isCanvasPenNativePointer(event: PointerEvent): boolean {
@@ -1404,9 +1463,9 @@ export class DragSessionManager extends Component implements DragStarter {
   }
 
   private isCanvasNativeTargetAtPoint(view: CanvasView, clientX: number, clientY: number): boolean {
-    const candidates = Array.from(view.containerEl.querySelectorAll<HTMLElement>(
-      ".canvas-node-connection-point, .canvas-edge, .canvas-interaction-path, .canvas-display-path, .canvas-path-label, .canvas-path-label-wrapper",
-    ));
+    const candidates = Array.from(
+      view.containerEl.querySelectorAll<HTMLElement>(CANVAS_NATIVE_HIT_SELECTOR),
+    );
     for (const candidate of candidates) {
       const rect = candidate.getBoundingClientRect();
       if (isPointInsidePointerRect(rect, clientX, clientY)) {
@@ -1433,7 +1492,7 @@ export class DragSessionManager extends Component implements DragStarter {
   }
 
   private resolveMarkdownActionForTarget(
-    event: DragEvent,
+    event: ModifierKeyState,
     context: MarkdownDropContext,
   ): ResolvedMarkdownDropAction {
     return resolveMarkdownDropActionForContext(
@@ -1446,7 +1505,7 @@ export class DragSessionManager extends Component implements DragStarter {
 
   private cacheMarkdownAction(
     action: ResolvedMarkdownDropAction,
-    event: DragEvent,
+    event: ModifierKeyState,
     targetFile: TFile,
     ownerDocument: Document,
     context: MarkdownDropContext,
@@ -1460,7 +1519,7 @@ export class DragSessionManager extends Component implements DragStarter {
   }
 
   private cachedMarkdownAction(
-    event: DragEvent,
+    event: ModifierKeyState,
     targetFile: TFile,
     ownerDocument: Document,
     context: MarkdownDropContext,
@@ -1604,8 +1663,10 @@ export class DragSessionManager extends Component implements DragStarter {
   ): Promise<void> {
     if (!this.isMarkdownTargetConnected(target)) return;
     if (!this.commitGate.tryClaim(session.id, "markdown")) return;
+    this.stopAutoScroll();
 
     try {
+      const targetState = target.editorView.state;
       if (action === "none") return;
       if (action === "move" && target.issue !== null) {
         new Notice(this.markdownDropIssueMessage(target.issue));
@@ -1635,8 +1696,14 @@ export class DragSessionManager extends Component implements DragStarter {
         if (requiresMoveConfirmation(session.units, target.context)) {
           const confirmed = await new MoveConfirmationModal(this.host.app, session.units.filter((unit) => unit.existingBlockId).length).openAndConfirm();
           if (!confirmed || !session.sourceView.state.doc.eq(session.sourceState.doc)) return;
+          if (!this.isMarkdownTargetConnected(target) ||
+            !target.editorView.state.doc.eq(targetState.doc) ||
+            !this.isEditorWritable(target.editorView) || !this.isEditorWritable(session.sourceView)) {
+            new Notice("A note changed or closed while confirming the move. Try again.");
+            return;
+          }
         }
-        this.moveMarkdownBlocks(session, target);
+        await this.moveMarkdownBlocks(session, target);
         return;
       }
 
@@ -1647,7 +1714,10 @@ export class DragSessionManager extends Component implements DragStarter {
         new Notice("The source note is read-only and needs a block ID before it can be embedded.");
         return;
       }
-      await this.embedMarkdownBlocks(session, target);
+      await this.embedMarkdownBlocks(session, target, action === "link-source");
+    } catch (error) {
+      console.error("DragDrop could not complete a Markdown drop.", error);
+      new Notice("Could not complete the Markdown drop. Check the affected notes.");
     } finally {
       this.cleanupDrag();
     }
@@ -1659,6 +1729,7 @@ export class DragSessionManager extends Component implements DragStarter {
     action: ResolvedMarkdownDropAction,
   ): Promise<void> {
     if (!this.commitGate.tryClaim(session.id, "markdown")) return;
+    this.stopAutoScroll();
 
     try {
       if (action === "none") return;
@@ -1686,25 +1757,16 @@ export class DragSessionManager extends Component implements DragStarter {
 
       const targetBefore = await this.host.app.vault.read(target.file);
       const sourceBefore = session.sourceState.doc.toString();
-      const planned = action === "embed-source"
-        ? this.planMarkdownReferences(session.sourceState, session.units)
-        : session.units;
-      const sourceLink = this.host.app.metadataCache.fileToLinktext(
-        session.sourceFile,
-        target.file.path,
-        true,
-      );
-      const targetBlocks = planned.map((unit) =>
-        action === "move"
-          ? unit.text
-          : directBlockEmbed(unit.text) ?? `![[${sourceLink}${sourceSubpath(unit)}]]`,
-      );
+      const references = action === "move" ? [] : this.markdownReferences(session);
+      const planned = action === "move" ? session.units : references.map(({ unit }) => unit);
+      const targetBlocks = action === "move" ? planned.map((unit) => unit.text)
+        : this.markdownReferenceTexts(references, target.file, action === "link-source");
       const targetAfter = insertBlocksAtBoundary(targetBefore, targetBefore.length, targetBlocks);
       const sourceAfter = action === "move"
         ? removeTextRanges(sourceBefore, session.units)
         : applyTextChanges(sourceBefore, this.blockIdChanges(planned));
 
-      if (action === "embed-source" && planned.some((unit) => unit.blockIdInsert !== undefined) && !this.isEditorWritable(session.sourceView)) {
+      if (action !== "move" && planned.some((unit) => unit.blockIdInsert !== undefined) && !this.isEditorWritable(session.sourceView)) {
         new Notice("The source note is read-only and needs a block ID before it can be embedded.");
         return;
       }
@@ -1719,37 +1781,41 @@ export class DragSessionManager extends Component implements DragStarter {
         before: targetBefore,
         after: targetAfter,
       };
+      const sourceSnapshot = captureEditorViewSnapshot(session.sourceView);
+      const attempted = new Set<string>();
       const transaction = await runMarkdownTransaction(
-        [sourceMutation, targetMutation],
+        [targetMutation, sourceMutation],
         {
           apply: async (mutation) => {
             if (mutation.path === session.sourceFile.path) {
-              if (!session.sourceView.state.doc.eq(session.sourceState.doc) || session.sourceView.state.doc.toString() !== mutation.before) {
+              if (!this.isEditorWritable(session.sourceView) || session.sourceView.state.doc.toString() !== mutation.before) {
                 throw new Error("The source note changed during the Markdown drop.");
               }
-              session.sourceView.dispatch({
-                changes: { from: 0, to: session.sourceView.state.doc.length, insert: mutation.after },
-              });
+              attempted.add(mutation.path);
+              dispatchEditorChanges(session.sourceView, documentChanges(mutation.before, mutation.after));
               return;
             }
             await this.host.app.vault.process(target.file, (current) => {
               if (current !== mutation.before) {
                 throw new Error("The file target changed during the Markdown drop.");
               }
+              attempted.add(mutation.path);
               return mutation.after;
             });
           },
           rollback: async (mutation) => {
+            if (!attempted.has(mutation.path)) return;
             if (mutation.path === session.sourceFile.path) {
-              if (session.sourceView.state.doc.toString() !== mutation.after) {
+              if (session.sourceView.state.doc.toString() === mutation.before) return;
+              if (!this.isEditorWritable(session.sourceView) || session.sourceView.state.doc.toString() !== mutation.after) {
                 throw new Error("The source note changed before rollback.");
               }
-              session.sourceView.dispatch({
-                changes: { from: 0, to: session.sourceView.state.doc.length, insert: mutation.before },
-              });
+              dispatchEditorChanges(session.sourceView, documentChanges(mutation.after, mutation.before));
+              restoreEditorViewSnapshot(session.sourceView, sourceSnapshot);
               return;
             }
             await this.host.app.vault.process(target.file, (current) => {
+              if (current === mutation.before) return current;
               if (current !== mutation.after) {
                 throw new Error("The file target changed before rollback.");
               }
@@ -1759,16 +1825,14 @@ export class DragSessionManager extends Component implements DragStarter {
         },
       );
       if (!transaction.ok) {
-        if (transaction.rollbackFailed) {
-          new Notice("The Markdown drop failed and could not fully roll back. Reload the affected notes.");
-        }
-        throw transaction.error instanceof Error
-          ? transaction.error
-          : new Error("The Markdown drop transaction failed.");
+        console.error("DragDrop file-target transaction failed.", transaction.error);
+        new Notice(transaction.rollbackFailed
+          ? "The Markdown drop failed and could not fully roll back. Check both notes."
+          : "Could not complete the Markdown drop. Applied changes were rolled back.");
       }
     } catch (error) {
       console.error("DragDrop could not complete a file-target Markdown drop.", error);
-      new Notice("Could not complete the file-target Markdown drop. No content was moved.");
+      new Notice("Could not complete the file-target Markdown drop. Check the affected notes.");
     } finally {
       this.cleanupDrag();
     }
@@ -1779,6 +1843,7 @@ export class DragSessionManager extends Component implements DragStarter {
       target.view.containerEl.isConnected &&
       target.view.containerEl.ownerDocument === target.ownerDocument &&
       target.editorView.dom.isConnected &&
+      target.view.file?.path === target.file.path &&
       target.file instanceof TFile
     );
   }
@@ -1794,6 +1859,7 @@ export class DragSessionManager extends Component implements DragStarter {
   private async embedMarkdownBlocks(
     session: DragSession,
     target: MarkdownDropTarget,
+    plainLink = false,
   ): Promise<void> {
     const sourceFoldStarts = this.host.config.preserveFoldState
       ? captureFoldStarts(session.sourceView.state)
@@ -1801,7 +1867,8 @@ export class DragSessionManager extends Component implements DragStarter {
     const targetFoldStarts = this.host.config.preserveFoldState && target.editorView !== session.sourceView
       ? captureFoldStarts(target.editorView.state)
       : [];
-    const planned = this.planMarkdownReferences(session.sourceState, session.units);
+    const references = this.markdownReferences(session);
+    const planned = references.map(({ unit }) => unit);
     const sourceContent = session.sourceState.doc.toString();
     const idChanges = this.blockIdChanges(planned);
     const sourceWithIds = applyTextChanges(sourceContent, idChanges);
@@ -1810,27 +1877,16 @@ export class DragSessionManager extends Component implements DragStarter {
       (target.file.path === session.sourceFile.path &&
         target.editorView.state.doc.eq(session.sourceState.doc));
     const targetContent = target.editorView.state.doc.toString();
-    const sourceLink = this.host.app.metadataCache.fileToLinktext(
-      session.sourceFile,
-      target.file.path,
-      true,
-    );
-    const embeds = planned.map((unit) =>
-      directBlockEmbed(unit.text) ?? `![[${sourceLink}${sourceSubpath(unit)}]]`,
-    );
+    const embeds = this.markdownReferenceTexts(references, target.file, plainLink);
 
-    let sourceAfter = sourceWithIds;
-    let targetAfter = insertBlocksAtBoundary(targetContent, target.position, embeds);
     if (sameDocument) {
-      const mappedPosition = mapPositionAfterChanges(target.position, idChanges);
-      targetAfter = insertBlocksAtBoundary(sourceWithIds, mappedPosition, embeds);
-      sourceAfter = targetAfter;
-    }
-
-    if (sameDocument && session.sourceView !== target.editorView) {
-      session.sourceView.dispatch({
-        changes: { from: 0, to: session.sourceView.state.doc.length, insert: sourceAfter },
-      });
+      const ids = session.sourceState.changes(idChanges);
+      const mappedPosition = ids.mapPos(target.position, 1);
+      const insertion = boundaryInsertionForBlocks(sourceWithIds, mappedPosition, embeds);
+      const changes = ids.compose(ChangeSet.of({
+        from: mappedPosition, insert: insertion,
+      }, ids.newLength));
+      this.applySameDocumentChanges(session.sourceView, target.editorView, changes);
       this.restoreEmbeddedFoldState(
         session.sourceView,
         sourceFoldStarts,
@@ -1842,13 +1898,13 @@ export class DragSessionManager extends Component implements DragStarter {
       return;
     }
 
-    const applied = this.applyMarkdownDocuments(
+    const applied = await this.applyMarkdownDocuments(
       session.sourceView,
       target.editorView,
       sourceContent,
       targetContent,
-      sourceAfter,
-      targetAfter,
+      sourceWithIds,
+      insertBlocksAtBoundary(targetContent, target.position, embeds),
     );
     if (!applied || !this.host.config.preserveFoldState) return;
 
@@ -1870,8 +1926,7 @@ export class DragSessionManager extends Component implements DragStarter {
     }
   }
 
-  private moveMarkdownBlocks(session: DragSession, target: MarkdownDropTarget): void {
-    const sourceViewSnapshot = captureEditorViewSnapshot(session.sourceView);
+  private async moveMarkdownBlocks(session: DragSession, target: MarkdownDropTarget): Promise<void> {
     const sourceFoldStarts = this.host.config.preserveFoldState
       ? captureFoldStarts(session.sourceView.state)
       : [];
@@ -1891,20 +1946,22 @@ export class DragSessionManager extends Component implements DragStarter {
     const targetContent = target.editorView.state.doc.toString();
     const listIntent = this.host.config.structuralMarkdownMoves ? target.listIntent : null;
     const plannedBlocks = structuredMoveBlocks(blocks, target.targetLineText, listIntent);
-    const sourceAfter = sameDocument
-      ? this.planOrderedListMove(
-          sourceContent,
-          blocks,
-          target.position,
-          target.targetLineText,
-          listIntent,
-        )
-      : this.host.config.renumberOrderedLists
+    if (sameDocument) {
+      const plan = planMarkdownMoveChanges(sourceContent, plannedBlocks, target.position);
+      const renumberChanges = documentChanges(plan.after, this.host.config.renumberOrderedLists
+        ? renumberOrderedListMarkers(plan.after)
+        : plan.after);
+      const changes = plan.changes.compose(renumberChanges);
+      const mapPosition = (position: number): number => renumberChanges.mapPos(plan.mapPosition(position));
+      this.applySameDocumentChanges(session.sourceView, target.editorView, changes, mapPosition);
+      restoreFoldStarts(session.sourceView, sourceFoldStarts.map(mapPosition));
+      return;
+    }
+
+    const sourceAfter = this.host.config.renumberOrderedLists
         ? renumberOrderedListMarkers(removeTextRanges(sourceContent, blocks))
         : removeTextRanges(sourceContent, blocks);
-    const targetAfter = sameDocument
-      ? sourceAfter
-      : this.host.config.renumberOrderedLists
+    const targetAfter = this.host.config.renumberOrderedLists
         ? renumberOrderedListMarkers(insertBlocksAtBoundary(
             targetContent,
             target.position,
@@ -1924,33 +1981,7 @@ export class DragSessionManager extends Component implements DragStarter {
           ),
         );
 
-    if (sameDocument && session.sourceView !== target.editorView) {
-      session.sourceView.dispatch({
-        changes: { from: 0, to: session.sourceView.state.doc.length, insert: sourceAfter },
-      });
-      restoreEditorViewSnapshot(
-        session.sourceView,
-        sourceViewSnapshot,
-        (position) => mapPositionAfterMove(
-          sourceContent,
-          plannedBlocks,
-          target.position,
-          position,
-        ),
-      );
-      restoreFoldStarts(
-        session.sourceView,
-        sourceFoldStarts.map((start) => mapPositionAfterMove(
-          sourceContent,
-          plannedBlocks,
-          target.position,
-          start,
-        )),
-      );
-      return;
-    }
-
-    const applied = this.applyMarkdownDocuments(
+    const applied = await this.applyMarkdownDocuments(
       session.sourceView,
       target.editorView,
       sourceContent,
@@ -1958,26 +1989,11 @@ export class DragSessionManager extends Component implements DragStarter {
       sourceAfter,
       targetAfter,
     );
-    if (!applied) {
-      restoreEditorViewSnapshot(session.sourceView, sourceViewSnapshot);
-      return;
-    }
-
-    restoreEditorViewSnapshot(
-      session.sourceView,
-      sourceViewSnapshot,
-      (position) => sameDocument
-        ? mapPositionAfterMove(sourceContent, plannedBlocks, target.position, position)
-        : mapPositionAfterRemovals(position, sourceContent, blocks),
-    );
-
-    if (!this.host.config.preserveFoldState) return;
+    if (!applied || !this.host.config.preserveFoldState) return;
 
     restoreFoldStarts(
       session.sourceView,
-      sourceFoldStarts.map((start) => sameDocument
-        ? mapPositionAfterMove(sourceContent, plannedBlocks, target.position, start)
-        : mapPositionAfterRemovals(start, sourceContent, blocks)),
+      sourceFoldStarts.map((start) => mapPositionAfterRemovals(start, sourceContent, blocks)),
     );
     if (!sameDocument) {
       restoreFoldStarts(
@@ -1987,25 +2003,6 @@ export class DragSessionManager extends Component implements DragStarter {
           : start),
       );
     }
-  }
-
-  private planOrderedListMove(
-    content: string,
-    blocks: readonly { from: number; to: number; text: string }[],
-    targetPosition: number,
-    targetLineText: string,
-    listIntent: ListDropIntent | null,
-  ): string {
-    const moved = planStructuredMarkdownMove(
-      content,
-      blocks,
-      targetPosition,
-      targetLineText,
-      listIntent,
-    );
-    return this.host.config.renumberOrderedLists
-      ? renumberOrderedListMarkers(moved)
-      : moved;
   }
 
   private restoreEmbeddedFoldState(
@@ -2037,55 +2034,76 @@ export class DragSessionManager extends Component implements DragStarter {
       : start);
   }
 
-  private applyMarkdownDocuments(
+  private async applyMarkdownDocuments(
     sourceView: EditorView,
     targetView: EditorView,
     sourceBefore: string,
     targetBefore: string,
     sourceAfter: string,
     targetAfter: string,
-  ): boolean {
+  ): Promise<boolean> {
     if (sourceView === targetView) {
       if (sourceAfter !== sourceBefore) {
-        sourceView.dispatch({
-          changes: { from: 0, to: sourceView.state.doc.length, insert: sourceAfter },
-        });
+        dispatchEditorChanges(sourceView, documentChanges(sourceBefore, sourceAfter));
       }
       return true;
     }
 
-    const targetChanged = targetAfter !== targetBefore;
-    const sourceChanged = sourceAfter !== sourceBefore;
+    const snapshots = new Map([
+      [sourceView, captureEditorViewSnapshot(sourceView)],
+      [targetView, captureEditorViewSnapshot(targetView)],
+    ]);
+    const inverseChanges = new Map<EditorView, ChangeSet>();
+    const result = await runMarkdownTransaction([
+      { path: "target", before: targetBefore, after: targetAfter },
+      { path: "source", before: sourceBefore, after: sourceAfter },
+    ], {
+      apply: (mutation) => {
+        const view = mutation.path === "source" ? sourceView : targetView;
+        if (!this.isEditorWritable(view) || view.state.doc.toString() !== mutation.before) {
+          throw new Error("A note changed or closed during the Markdown drop.");
+        }
+        const changes = documentChanges(mutation.before, mutation.after);
+        inverseChanges.set(view, changes.invert(view.state.doc));
+        dispatchEditorChanges(view, changes);
+      },
+      rollback: (mutation) => {
+        const view = mutation.path === "source" ? sourceView : targetView;
+        if (!inverseChanges.has(view) || view.state.doc.toString() === mutation.before) return;
+        if (!this.isEditorWritable(view) || view.state.doc.toString() !== mutation.after) {
+          throw new Error("A note changed before rollback.");
+        }
+        const snapshot = snapshots.get(view);
+        const inverse = inverseChanges.get(view);
+        if (!snapshot || !inverse) throw new Error("Missing rollback snapshot.");
+        dispatchEditorChanges(view, inverse);
+        restoreEditorViewSnapshot(view, snapshot);
+      },
+    });
+    if (!result.ok) {
+      console.error("DragDrop could not apply a Markdown drop.", result.error);
+      new Notice(result.rollbackFailed
+        ? "The Markdown drop failed and could not fully roll back. Check both notes."
+        : "Could not complete the Markdown drop. Applied changes were rolled back.");
+    }
+    return result.ok;
+  }
+
+  private applySameDocumentChanges(
+    source: EditorView,
+    target: EditorView,
+    changes: ChangeSet,
+    mapPosition?: (position: number) => number,
+  ): void {
+    if (!this.isEditorWritable(source) || !this.isEditorWritable(target)) {
+      throw new Error("A note is read-only or closed.");
+    }
+    const cancelSync = source !== target ? preserveEditorOnSync(target, changes, mapPosition) : undefined;
     try {
-      if (targetChanged) {
-        targetView.dispatch({
-          changes: { from: 0, to: targetView.state.doc.length, insert: targetAfter },
-        });
-      }
-      if (sourceChanged) {
-        sourceView.dispatch({
-          changes: { from: 0, to: sourceView.state.doc.length, insert: sourceAfter },
-        });
-      }
-      return true;
+      dispatchEditorChanges(source, changes, mapPosition);
     } catch (error) {
-      try {
-        if (sourceChanged) {
-          sourceView.dispatch({
-            changes: { from: 0, to: sourceView.state.doc.length, insert: sourceBefore },
-          });
-        }
-        if (targetChanged) {
-          targetView.dispatch({
-            changes: { from: 0, to: targetView.state.doc.length, insert: targetBefore },
-          });
-        }
-      } catch (rollbackError) {
-        console.error("DragDrop could not roll back a Markdown drop.", rollbackError);
-      }
-      console.error("DragDrop could not apply a Markdown drop.", error);
-      new Notice("Could not complete the Markdown drop. No content was moved.");
-      return false;
+      cancelSync?.();
+      throw error;
     }
   }
 
@@ -2236,13 +2254,21 @@ export class DragSessionManager extends Component implements DragStarter {
     );
   }
 
-  private planMarkdownReferences(state: EditorState, units: SourceUnit[]): SourceUnit[] {
-    const usedIds = new Set<string>();
-    const matches = state.doc.toString().matchAll(/\^([A-Za-z0-9-]+)/g);
-    for (const match of matches) usedIds.add(match[1]);
-    return units.map((unit) =>
-      directBlockEmbed(unit.text) ? unit : ensurePlannedReference(state, unit, usedIds),
-    );
+  private markdownReferences(session: DragSession): CanvasReference<TFile>[] {
+    const references = this.planReferences(session.sourceState, session.units, session.sourceFile);
+    if (!references) throw new Error("An embedded block's source file could not be resolved.");
+    return references;
+  }
+
+  private markdownReferenceTexts(references: CanvasReference<TFile>[], target: TFile, plainLink: boolean): string[] {
+    return references.map(({ file, subpath, unit }) => {
+      const linktext = this.host.app.metadataCache.fileToLinktext(file, target.path, true);
+      if (plainLink) return sourceBlockLink(linktext, subpath, this.host.config.crossMarkdownEmbedAlias);
+      const original = directBlockEmbed(unit.text);
+      const aliasStart = original?.indexOf("|") ?? -1;
+      const embed = sourceEmbedLink(linktext, subpath);
+      return original && aliasStart >= 0 ? `${embed.slice(0, -2)}${original.slice(aliasStart)}` : embed;
+    });
   }
 
   private findMarkdownFile(view: EditorView): TFile | null {

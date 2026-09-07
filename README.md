@@ -25,13 +25,13 @@ When a dragged block is already a standalone embed such as `![[Books/Source#^abc
 
 1. Open a source Markdown note and a destination Markdown note.
 2. Drag a block handle into the destination editor.
-3. With no modifier, DragDrop inserts an embed such as `![[Source note#^block-id]]` and only adds a missing block ID to the source. A dragged block that is already a standalone block embed is copied as that exact embed; multiple selected blocks create multiple embeds.
+3. With the default no-modifier binding, DragDrop inserts `![[Source note#^block-id]]` and only adds a missing block ID to the source. To insert a normal link, assign a modifier to **Insert an alias link** in Settings: it produces `[[Source note#^block-id|🔗]]` with no exclamation mark. The alias accepts emoji, text, or an empty value. An existing standalone block embed reuses its original target without adding another ID; paths are resolved relative to the destination note. Multiple selected blocks create multiple references.
 4. Hold Ctrl on Windows/Linux or Command on macOS to move the block. Same-file moves keep the file path and block ID, so they do not ask for reference-risk confirmation. Cross-file moves with an existing ID still ask for confirmation, and read-only editors remain protected.
 5. Move drops can use sibling, child, and outdent list intent, show a precise insertion line, highlight the source/target, and auto-scroll near the editor edge. These structural behaviors are controlled by settings and apply only to the Move action.
 
 Same-file Markdown drops and cross-file Markdown drops have separate modifier mappings. Every modifier chord (including no modifier, Ctrl/Command, Shift, Alt/Option, and combinations) can be assigned independently in Settings. The defaults are no modifier = embed and Ctrl/Command = move for both contexts.
 
-Markdown blocks can also be dropped onto a Markdown file in the file tree or an internal Markdown link to append at the end. Cross-file writes use revision checks and roll back an already-written source when the target changes or fails.
+Markdown blocks can also be dropped onto a Markdown file in the file tree or an internal Markdown link to append at the end. Cross-file writes check revisions and editor writability, insert into the target first, and roll back completed writes if a later write fails. A failed rollback is reported explicitly.
 
 Markdown drops align to a destination block boundary. Structural Move can preserve heading/list folds after the transaction, and optional ordered-list renumbering is disabled by default.
 
@@ -62,9 +62,9 @@ rank:
 
 ### Touch and pen
 
-On a Surface, touch or pen drag starts from the block handle after moving at least 8 px. A tap on the handle selects the complete block. Touch and pen use the separate **Touch drop action** setting, which defaults to linking the source block; a keyboard modifier at drop time uses the normal Canvas modifier mapping instead.
+On a Surface, touch or pen drag starts from the block handle after moving at least 8 px. A tap on the handle selects the complete block. For Canvas drops, touch and pen use the separate **Touch drop action** setting, which defaults to linking the source block; a keyboard modifier at drop time uses the normal Canvas modifier mapping instead.
 
-When **Surface Pen side-button drag** is enabled, pressing the pen's side button on a Markdown handle starts the same captured drag path as a left-button drag and uses the no-modifier Canvas action. On Canvas itself, the side button is translated into a captured left-button sequence so cards and the Canvas surface receive the same input as a left-button selection. A pen tip without the side button is translated into a captured middle-button sequence that pans the whole Canvas, including when the side-button setting is disabled. Canvas connection points and existing edge controls stay on Obsidian's native event path so the pen can create and edit arrows without holding the side button. The check is limited to `pen` events, so ordinary desktop mouse behavior is unchanged.
+When **Surface Pen side-button drag** is enabled, pressing the pen's side button on a Markdown handle starts the captured drag path. Markdown drops use the saved binding for the actual keyboard modifiers. With no keyboard key pressed, the saved **No modifier** action applies, including a custom Move binding. Canvas drops keep the no-modifier Canvas action. On Canvas itself, the side button is translated into a captured left-button sequence so cards and the Canvas surface receive the same input as a left-button selection. A pen tip without the side button is translated into a captured middle-button sequence that pans the whole Canvas, including when the side-button setting is disabled. Canvas resize handles, connection points, and existing edge controls stay on Obsidian's native event path. The check is limited to `pen` events, so ordinary desktop mouse behavior is unchanged.
 
 Touch and pen drops support a Canvas in the same Obsidian window. Mouse dragging continues to support Canvas popout windows. **Larger touch handles** is enabled by default and uses 44 x 44 targets only in coarse-pointer environments; disable it to use standard-size handles. **Mobile block interactions** is disabled by default; when enabled, a 200 ms long press enters handle-brushing selection mode while a short movement still starts a drag. Normal editor scrolling and text selection remain unchanged outside the handle.
 
@@ -78,7 +78,7 @@ For Canvas references and Markdown embeds, DragDrop keeps the Markdown source as
 
 - It never cuts, replaces, or moves the dragged source content for Canvas drops or embeds.
 - It only adds a missing block ID when a block reference requires one.
-- For paragraphs, list items, quotes, and Callouts, a generated ID is appended to the last logical line as `正文 ^block-id` (with one separating space). Fenced code, math, tables, and native-subtree boundaries retain their standalone marker form.
+- For paragraphs, list items, quotes, and Callouts, a generated ID is appended to the owning line as `正文 ^block-id` (with one separating space). A list subtree puts the ID on its root item while the reference still covers all children. Fenced code, math, and tables retain their standalone marker form.
 - Existing block IDs are reused.
 - Heading references use the heading subpath and do not add a block ID.
 
@@ -147,7 +147,8 @@ The settings tab includes:
 - Canvas node width, initial height, and gap
 - Drag preview width
 - Canvas actions, each with its assigned modifier (`Insert a link to the original block`, `Create a note from the block`, or `Cancel this drop`)
-- Markdown actions, each with its assigned modifier (`Insert an embed of the original block`, `Move the block here`, or `Cancel this drop`)
+- Markdown actions, each with its assigned modifier (`Insert a block embed (![[file#^block-id]])`, `Move the block here`, or `Cancel this drop`)
+- Block link alias (default `🔗`; emoji, text, and an empty alias are supported; assign the separate alias-link action a modifier)
 - Structural Markdown moves, desktop multi-block selection, block menus, cross-file file targets, edge auto-scroll, fold preservation, and optional ordered-list renumbering
 - Handle position (left/right) and visibility (hover/focus or always visible)
 - Surface Pen side-button drag

@@ -23,6 +23,7 @@ import {
 import {
   assignedModifierForAction,
   assignModifierToAction,
+  normalizeCrossMarkdownEmbedAlias,
   normalizeSelectionMenuAutoDismissSeconds,
   UNASSIGNED_MODIFIER,
   type BindingModifier,
@@ -56,6 +57,7 @@ type ScalarSettingKey =
   | "multiBlockSelection"
   | "blockTypeMenu"
   | "crossFileFileTargets"
+  | "crossMarkdownEmbedAlias"
   | "edgeAutoScroll"
   | "autoScrollEdgePx"
   | "autoScrollMaxSpeed"
@@ -95,6 +97,7 @@ const CANVAS_BINDING_ACTIONS: CanvasBindingAction[] = [
 
 const MARKDOWN_BINDING_ACTIONS: MarkdownBindingAction[] = [
   "embed-source",
+  "link-source",
   "move",
   "none",
 ];
@@ -124,6 +127,7 @@ function canvasActionLabel(action: CanvasBindingAction, text: SettingsText): str
 function markdownActionLabel(action: MarkdownBindingAction, text: SettingsText): string {
   switch (action) {
     case "embed-source": return text.markdownEmbedAction;
+    case "link-source": return text.markdownLinkAction;
     case "move": return text.markdownMoveAction;
     case "none": return text.cancelDropAction;
   }
@@ -439,6 +443,15 @@ export class DragDropSettingTab extends PluginSettingTab {
             control: { type: "toggle", key: "crossFileFileTargets" },
           },
           {
+            name: text.crossMarkdownEmbedAliasName,
+            desc: text.crossMarkdownEmbedAliasDescription,
+            control: {
+              type: "text",
+              key: "crossMarkdownEmbedAlias",
+              placeholder: text.crossMarkdownEmbedAliasPlaceholder,
+            },
+          },
+          {
             name: text.edgeAutoScrollName,
             desc: text.edgeAutoScrollDescription,
             control: { type: "toggle", key: "edgeAutoScroll" },
@@ -605,6 +618,8 @@ export class DragDropSettingTab extends PluginSettingTab {
         return this.host.config.blockTypeMenu;
       case "crossFileFileTargets":
         return this.host.config.crossFileFileTargets;
+      case "crossMarkdownEmbedAlias":
+        return this.host.config.crossMarkdownEmbedAlias;
       case "edgeAutoScroll":
         return this.host.config.edgeAutoScroll;
       case "autoScrollEdgePx":
@@ -739,6 +754,10 @@ export class DragDropSettingTab extends PluginSettingTab {
       case "crossFileFileTargets":
         if (typeof value !== "boolean") return;
         this.host.config.crossFileFileTargets = value;
+        break;
+      case "crossMarkdownEmbedAlias":
+        if (typeof value !== "string") return;
+        this.host.config.crossMarkdownEmbedAlias = normalizeCrossMarkdownEmbedAlias(value);
         break;
       case "edgeAutoScroll":
         if (typeof value !== "boolean") return;
