@@ -220,7 +220,7 @@
 - [x] 审查 8.8 相对 `60bcdef` 的业务差异，保留列表根 ID 与已放弃功能清理；补续行首行已有 ID、EOF 换行、多块间距、独立分栏配置迁移及回滚保留目标副本
 - [x] 完成 lint 零 warnings、typecheck、23 files / 163 tests、沙箱外生产 build 与 node check
 - [x] 核对最终六文件三方部署哈希，data.json/graph-worker.js 未变化（构建 main.js SHA-256：7C11BDEC03D77A1E28238793133055CEEED4A8BD0241FC9B2ACE421C37A9CB96）
-- [x] 用户已授权提交、推送与发布；版本升级至 `0.1.7`，待完成 commit/tag/push/Release 收口
+- [x] 用户已授权提交、推送与发布；`0.1.7` 已完成 commit/tag/push/正式 GitHub Release，待补发布记录提交
 - [ ] 实机验收四条路径：鼠标同文件移动/列表缩进/空行/视口及撤销；同文件双分栏和 Surface Pen 真实无修饰键移动；跨文件普通双链与原嵌入分离；新 Canvas 卡片未 reload 前的底边 resize 与连接点
 - 自动审批已拒绝对 canvasread-dev 执行 Ctrl+R，理由为未保存编辑与临时状态可能丢失。已发出明确重载批准问题，等待用户答复后继续。独立样本已建立于开发库根目录：DragDrop-regression-20260907.md / .canvas；未改已有笔记。
 - **状态：** in_progress

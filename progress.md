@@ -687,7 +687,9 @@
 - 最终 main.js SHA-256：7C11BDEC03D77A1E28238793133055CEEED4A8BD0241FC9B2ACE421C37A9CB96。本轮未 commit/push/release，未触碰既有用户笔记，实机验收保持未完成。
 - 最终六文件已重新同步，两处目标与源码三方 SHA-256 全部一致；data.json 与 graph-worker.js 再次确认未变化。当前唯一阻塞入口为开发库重载批准，独立实机样本已就绪。
 
-### 0.1.7 提交、推送与 Release 准备
+### 0.1.7 提交、推送与 Release
 
 - 用户已明确授权 commit、push、release；版本统一升级为 `0.1.7`，同步 `manifest.json`、`package.json`、`package-lock.json` 和 `versions.json`。
-- 版本升级后的 lint、typecheck、163 项测试、生产 build 与 `git diff --check` 均通过；等待提交后创建 tag 和正式 GitHub Release。
+- 版本升级后的 lint、typecheck、163 项测试、生产 build 与 `git diff --check` 均通过。
+- 已创建提交 `5a6b052`，推送分支 `codex/stage-8-dragger-integration`，创建 tag `0.1.7` 和正式 GitHub Release：`https://github.com/Rex-Diego/dragdrop/releases/tag/0.1.7`。
+- Release 为非 draft、非 prerelease，附件 `main.js`、`manifest.json`、`styles.css` 均已上传；GitHub SHA-256 与本地构建一致。随后补充本发布记录提交。
