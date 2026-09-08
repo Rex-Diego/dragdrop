@@ -567,7 +567,8 @@ export class SelectionMenuFeature extends Component {
     if (behavior === "native") return;
     if (behavior === "hide") {
       event.preventDefault();
-      event.stopImmediatePropagation();
+      // Cancel Obsidian's native menu without starving other integrations
+      // that observe the same context-menu gesture (including system bridges).
       this.clearPendingMenu(state);
       this.clearActiveMenu(state, undefined, true);
       return;
@@ -596,7 +597,9 @@ export class SelectionMenuFeature extends Component {
         this.activatePendingMenu(state);
       });
       state.pendingObserver = observer;
-      observer.observe(state.ownerDocument, { childList: true, subtree: true });
+      const observerRoot = state.ownerDocument.documentElement ?? state.ownerDocument.body;
+      if (!observerRoot) return;
+      observer.observe(observerRoot, { childList: true, subtree: true });
     }
     if (state.pendingTimer !== null) state.ownerWindow.clearTimeout(state.pendingTimer);
     state.pendingTimer = state.ownerWindow.setTimeout(() => {
@@ -634,7 +637,12 @@ export class SelectionMenuFeature extends Component {
     active = activeMenu;
     state.active = activeMenu;
     state.component.addChild(component);
-    activeMenu.observer.observe(state.ownerDocument, {
+    const observerRoot = state.ownerDocument.documentElement ?? state.ownerDocument.body;
+    if (!observerRoot) {
+      this.clearActiveMenu(state, activeMenu);
+      return;
+    }
+    activeMenu.observer.observe(observerRoot, {
       childList: true,
       subtree: true,
     });
