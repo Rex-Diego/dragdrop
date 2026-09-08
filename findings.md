@@ -1,5 +1,26 @@
 # 发现与决策
 
+## 0.1.11 发布范围（2026-09-09）
+
+- 用户已确认卡片外观开关和 Surface Pen 菜单修复正常，并授权 commit、push、release。
+- 发布版本从 0.1.10 升至 0.1.11，包含本轮全部源码、测试、文档和构建产物；沿用 codex/stage-8-dragger-integration 分支，正式 Release 附件为 main.js、manifest.json、styles.css。
+
+## Surface Pen Markdown → Canvas 菜单残留（2026-09-09）
+
+- 用户明确复测无效；菜单包含添加文本/笔记/媒体/网页、创建分组、撤销、粘贴、网格/物体对齐和只读。首轮修复结论撤回。
+- 已通过 Obsidian.com vault=canvasread-dev eval 确认实际库路径、运行时 DragSessionManager 的拦截函数和屏幕上残留菜单；源码、标准插件目录、交付目录 main.js 哈希均为 A4D684...2727DA，不是部署目录错误。
+- 只读检查本机 obsidian.asar/app.js：Canvas.onContextMenu 检查 defaultPrevented 和 wrapperEl 后创建上述菜单；并非已证明存在独立 mouseup 打开路径。仍需实际事件轨迹，不能凭菜单名字假定鼠标链路。
+- 临时事件探针仅保存事件类型、指针 ID、按钮、坐标与拖放状态，不记录笔记正文；挂在 manager 上并注册卸载清理，实机记录后手动恢复原函数。
+- 已抓到用户真实复现：pen pointerup 使用 ID 18，坐标 (622, 1033.3334)，button=2/buttons=0；3ms 后原生 Canvas contextmenu 仍为 pointerType=pen，但 ID 变为 1，坐标 (622, 1033)。旧 suppressMarkdownPenContextMenu 因 ID 不同返回 false，部署和 listener 均正常。
+- 修正为：菜单事件 ID 不同时允许使用同一 document、1 秒内、24px 内的笔势记录匹配。contextmenu 的 pointerId 不再被当作可靠的原笔势 ID；真实 pointerdown 仍清除旧记录。
+- 修正版已在 canvasread-dev 通过 plugin:reload 生效；向真实 Canvas wrapper 派发与记录一致的 ID 1 菜单事件，defaultPrevented=true、新增菜单数=0；同落点普通鼠标菜单判定为不拦截。此项为运行时重放，最终实体笔复测单独保留。
+
+- 当前 Window 捕获层 handleCanvasPenContextMenu 仅检查 canvasPenDrag / canvasPenNativePointer；Markdown 抓手启动的 pointerDrag 没有菜单拦截，延迟 contextmenu 也会在 cleanupDrag 后漏出。
+- 修复复用现有 Window contextmenu listener，按笔势所属 document 拦截；结束后的抑制限定为短时、对应笔指针或落点附近兼容鼠标事件，新物理 pointerdown 清除残留抑制。
+- 用户已确认上一轮高度自适应与隐藏边框开关问题解决。
+- 已实现独立 Markdown 笔势菜单记录，捕获开始/移动/抬笔坐标；活动笔势按 owner document 与 pointerId 匹配，结束后最多保留 1 秒且只消耗一次延迟菜单。旧版 MouseEvent 回退仅匹配右键及落点 24px 内事件。
+- 新物理 pointerdown、窗口关闭/失焦和插件卸载清除残留记录；窗口失焦同时取消所属 Markdown 笔拖拽。现有 Canvas 内操作映射与菜单拦截保持原路径。
+
 ## 8.12 用户锁定 iPad 映射
 
 - 手指替代 Surface Pen 笔尖，Apple Pencil 替代侧键；不需要临时操作键、双击或挤压 API。
@@ -719,3 +740,10 @@
 - 本轮 Computer Use 已可访问真实 Windows Obsidian 窗口，修正此前“只有浏览器 surface”的环境结论。但 Ctrl+R 被自动审批拒绝，尚无本轮真实拖动/视口/底边缩放通过证据；不能把 163 项自动测试当作实机通过。
 - 最终六文件三方部署哈希一致，标准插件目录配置与交付目录 graph-worker.js 均保留；安装目录内容已更新，但需获准重载后才会进入运行中的开发库。
 - `0.1.7` 已发布为正式 GitHub Release，附件 digest 与本地 `manifest.json`、`main.js`、`styles.css` 一致；tag 指向发布提交 `5a6b052`，发布记录随后单独提交。
+# Canvas 新卡片外观开关（2026-09-09）
+
+- 用户新增需求：Markdown 拖入 Canvas 时可自动隐藏边框，并为已有高度自适应增加独立开关。
+- 当前 CanvasAdapter 创建每张卡片后执行一次 fitHeight，通过 resize 更新尺寸；不是持续跟踪内容。
+- 已核对本机 advanced-canvas/main.js：节点样式使用 styleAttributes.border = "invisible"，通过 getData/setData 合并更新。
+- 高度适配默认开启；隐藏边框默认关闭。只影响后续 Markdown → Canvas 新卡片，涵盖源引用、文本卡片和创建笔记；其他节点样式保留。
+- 两开关沿用 schema 4 的增量默认值合并，保留用户已有布尔值并回退非法配置。关闭适配后按实际初始高度排列；边框使用节点 getData/setData 合并更新，缺少该可选 API 时仍正常创建卡片。

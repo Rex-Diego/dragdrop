@@ -44,6 +44,8 @@ type ScalarSettingKey =
   | "defaultFolder"
   | "nodeWidth"
   | "initialNodeHeight"
+  | "autoFitNodeHeight"
+  | "hideNodeBorder"
   | "nodeGap"
   | "previewWidth"
   | "handlePosition"
@@ -359,6 +361,16 @@ export class DragDropSettingTab extends PluginSettingTab {
             control: { type: "number", key: "initialNodeHeight", min: 80, max: 1_200, step: 1 },
           },
           {
+            name: text.autoFitNodeHeightName,
+            desc: text.autoFitNodeHeightDescription,
+            control: { type: "toggle", key: "autoFitNodeHeight" },
+          },
+          {
+            name: text.hideNodeBorderName,
+            desc: text.hideNodeBorderDescription,
+            control: { type: "toggle", key: "hideNodeBorder" },
+          },
+          {
             name: text.verticalGapName,
             desc: text.verticalGapDescription,
             control: { type: "number", key: "nodeGap", min: 0, max: 400, step: 1 },
@@ -614,6 +626,10 @@ export class DragDropSettingTab extends PluginSettingTab {
         return this.host.config.nodeWidth;
       case "initialNodeHeight":
         return this.host.config.initialNodeHeight;
+      case "autoFitNodeHeight":
+        return this.host.config.autoFitNodeHeight;
+      case "hideNodeBorder":
+        return this.host.config.hideNodeBorder;
       case "nodeGap":
         return this.host.config.nodeGap;
       case "previewWidth":
@@ -727,6 +743,11 @@ export class DragDropSettingTab extends PluginSettingTab {
         this.host.config.nodeGap = normalized;
         break;
       }
+      case "autoFitNodeHeight":
+      case "hideNodeBorder":
+        if (typeof value !== "boolean") return;
+        this.host.config[key] = value;
+        break;
       case "previewWidth": {
         const normalized = clampInteger(value, 200, 1_000);
         if (normalized === undefined) return;

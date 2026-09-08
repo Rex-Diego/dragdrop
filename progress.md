@@ -1,5 +1,32 @@
 # 进度日志
 
+## 0.1.11 发布准备（2026-09-09）
+
+- 用户实机确认 Surface Pen 菜单已修复；两个卡片外观开关此前已确认正常。
+- 已获 commit、push、release 授权，版本文件和发布说明更新至 0.1.11。package-lock.json 仍按原有忽略规则仅本地更新。
+- fetch 确认本地分支与 origin/codex/stage-8-dragger-integration 无分歧，远端最新正式版本为 0.1.10。
+- 0.1.11 版本更新后 lint 零错误/警告、typecheck、25 files / 243 tests、生产 build、node --check main.js 和 git diff --check 均通过。
+- 六个插件发布文件已更新到标准 plugins/dragdrop 与 plugins-dev/plugin，三方哈希一致；data.json 和 graph-worker.js 未变。
+
+## 会话：2026-09-09（Surface Pen 拖放右键菜单）
+
+- 用户复测菜单仍残留，首轮行为验证失败；已恢复计划未完成状态。
+- 发现本机 Obsidian.com 可直接查询开发库，确认新代码已实际加载；无需靠部署哈希推断运行时状态。
+- CLI eval 中 require("obsidian") 不可用，返回 Cannot find module，随后改为读取现有插件实例，未重试该导入路径。
+- 已安装临时内存事件探针，等待用户用原来的 Surface Pen 手势复现；不修改笔记内容。
+- 用户已复现并获取轨迹，根因为 Windows 原生 contextmenu 将 pen pointerId 从 18 改为 1，旧代码严格 ID 比较漏拦截；菜单坐标和时间均匹配当前笔势。
+- 已按真实序列修正并新增回归，接下来检查构建、运行时重放和用户实机复测。
+- 修正版 lint 零错误/警告、typecheck、25 files / 243 tests、build、node --check main.js、git diff --check 均通过。
+- 两处 main.js 部署并核对哈希 DD5120BEE9E4337EE6B21693DD8445DF3153CB551270C2C6BADF7139B0B38CD3；配置和 graph-worker.js 未变。Obsidian CLI 已仅重载 canvasread-dev 的 DragDrop，未重载整个应用。
+- 临时诊断 wrappers/全局缓冲已恢复与删除。真实 Canvas wrapper 的菜单事件重放成功拦截，普通鼠标右键判定放行；已请用户直接实机复测，无需再次手动重载。
+
+- 保留上一轮未提交改动；用户确认两个外观开关问题已解决。
+- 已检查抓手 Pointer capture、Window contextmenu、Canvas 笔事件和 cleanupDrag 生命周期，正在补齐 Markdown 笔拖放的菜单拦截及定向回归。
+- 首轮 Canvas pen + DragSessionManager 定向回归 77 项通过；增加窗口失焦时取消 Markdown 笔拖放并清空菜单抑制，准备最终检查。
+- 最终检查通过：lint 零错误/警告、typecheck、25 files / 242 tests、生产 build、node --check main.js、git diff --check。
+- 新增 9 项菜单回归，覆盖活动拖放、异步提交、丢失 capture、PointerEvent/旧 MouseEvent、正常鼠标/键盘/其他窗口、超时、新输入及窗口失焦。
+- 已将 main.js 更新到标准 plugins/dragdrop 与 plugins-dev/plugin，SHA-256 三方一致：A4D684EAA8FBC16B90E1D85A69F6971DF7EDA3B0FEB6C0B0EA876143527727DA；存在的 data.json 与 graph-worker.js 哈希未变。未自动重载，实体 Surface Pen 验收待用户复核；未 commit/push/release。
+
 ## 0.1.8 发布完成与 8.12 开始
 
 - 197 项测试、lint/typecheck/build/语法/diff 检查通过；提交 1e02ca6 已推送至 codex/stage-8-dragger-integration，tag 0.1.8 已推送。
@@ -725,3 +752,11 @@
 - 版本升级后的 lint、typecheck、163 项测试、生产 build 与 `git diff --check` 均通过。
 - 已创建提交 `5a6b052`，推送分支 `codex/stage-8-dragger-integration`，创建 tag `0.1.7` 和正式 GitHub Release：`https://github.com/Rex-Diego/dragdrop/releases/tag/0.1.7`。
 - Release 为非 draft、非 prerelease，附件 `main.js`、`manifest.json`、`styles.css` 均已上传；GitHub SHA-256 与本地构建一致。随后补充本发布记录提交。
+# 会话：2026-09-09（Canvas 卡片外观开关）
+
+- 初始工作树干净；已读取现有设置、Canvas 创建路径与本机 Advanced Canvas 边框实现。
+- 使用 Obsidian 开发技能和 planning-with-files；接下来实现独立开关并验证设置持久化、固定高度排列和节点样式合并。
+- 首轮定向测试 4 files / 29 tests 通过；lint 发现新增测试中的 TFile 强转警告和 JSON.parse 的 any 参数错误，已改为 mock TFile 实例与显式畸形输入类型边界，准备重跑。
+- 最终 lint 零错误/警告、typecheck、4 files / 29 tests、build、node --check main.js、git diff --check 均通过。Git 的 LF/CRLF 提示属于已有工作区换行配置，没有修改仓库配置。
+- 已更新标准插件目录与 plugins-dev/plugin 的 main.js，SHA-256 一致；存在的 data.json 与 graph-worker.js 哈希未变。源码仍仅在规范项目目录开发。
+- 未自动重载 Obsidian，实际视觉效果待用户实机确认；本次没有提交或发布新版本。

@@ -8,6 +8,7 @@ import type {
   ObsidianCanvas,
 } from "./canvas-types";
 import { isCanvasView } from "./canvas-types";
+import { DEFAULT_SETTINGS, type DragDropSettings } from "./settings-model";
 
 interface OwnerWindow extends Window {
   readonly MouseEvent: new (type: string, eventInitDict?: MouseEventInit) => MouseEvent;
@@ -147,6 +148,7 @@ export class CanvasAdapter {
     width: number,
     initialHeight: number,
     gap: number,
+    options: Pick<DragDropSettings, "autoFitNodeHeight" | "hideNodeBorder"> = DEFAULT_SETTINGS,
   ): Promise<CanvasNode[]> {
     const created: CanvasNode[] = [];
     let y = target.point.y;
@@ -157,8 +159,11 @@ export class CanvasAdapter {
       try {
         const node = this.createNode(target, item, { x: target.point.x, y }, width, initialHeight);
         created.push(node);
+        if (options.hideNodeBorder) this.hideBorder(node);
         await Promise.resolve(target.canvas.requestFrame());
-        const fittedHeight = await this.fitHeight(node, target.window, initialHeight);
+        const fittedHeight = options.autoFitNodeHeight
+          ? await this.fitHeight(node, target.window, initialHeight)
+          : this.safeHeight(node.height, initialHeight);
         y += fittedHeight + gap;
       } catch (error) {
         console.error("DragDrop could not create a Canvas node.", error);
@@ -170,6 +175,23 @@ export class CanvasAdapter {
       await Promise.resolve(target.canvas.requestSave());
     }
     return created;
+  }
+
+  private hideBorder(node: CanvasNode): void {
+    if (!node.getData || !node.setData) return;
+    try {
+      const data = node.getData();
+      const styles = data.styleAttributes;
+      node.setData({
+        ...data,
+        styleAttributes: {
+          ...(styles && typeof styles === "object" && !Array.isArray(styles) ? styles : {}),
+          border: "invisible",
+        },
+      });
+    } catch (error) {
+      console.error("DragDrop could not hide a Canvas node border.", error);
+    }
   }
 
   private createNode(

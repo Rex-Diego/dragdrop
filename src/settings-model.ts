@@ -21,6 +21,8 @@ export interface DragDropSettings {
   folderStrategy: FolderStrategy;
   nodeWidth: number;
   initialNodeHeight: number;
+  autoFitNodeHeight: boolean;
+  hideNodeBorder: boolean;
   nodeGap: number;
   previewWidth: number;
   handlePosition: HandlePosition;
@@ -83,6 +85,8 @@ export const DEFAULT_SETTINGS: DragDropSettings = {
   folderStrategy: "fixed",
   nodeWidth: 400,
   initialNodeHeight: 200,
+  autoFitNodeHeight: true,
+  hideNodeBorder: false,
   nodeGap: 40,
   previewWidth: 400,
   handlePosition: "right",
@@ -271,6 +275,14 @@ export function mergeSettings(
       1_200,
     ),
     nodeGap: clampSavedInteger(loaded?.nodeGap, DEFAULT_SETTINGS.nodeGap, 0, 400),
+    autoFitNodeHeight:
+      typeof loaded?.autoFitNodeHeight === "boolean"
+        ? loaded.autoFitNodeHeight
+        : DEFAULT_SETTINGS.autoFitNodeHeight,
+    hideNodeBorder:
+      typeof loaded?.hideNodeBorder === "boolean"
+        ? loaded.hideNodeBorder
+        : DEFAULT_SETTINGS.hideNodeBorder,
     previewWidth: clampSavedInteger(
       loaded?.previewWidth,
       DEFAULT_SETTINGS.previewWidth,

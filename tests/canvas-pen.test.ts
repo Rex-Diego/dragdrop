@@ -11,6 +11,13 @@ vi.mock("obsidian", () => ({
 }));
 
 type Adapter = {
+  pointerDrag: unknown;
+  session: unknown;
+  findPointerDropTarget(): unknown;
+  commitDrop(): Promise<void>;
+  cleanupDrag(): void;
+  endPointerDrag(event: PointerEvent): Promise<void>;
+  cancelPointerDrag(pointerId: number): void;
   handleCanvasPenPointerDown(event: PointerEvent): void;
   handleCanvasPenPointerMove(event: PointerEvent): void;
   handleCanvasPenPointerUp(event: PointerEvent): void;
@@ -78,6 +85,113 @@ function fixture(controlClass = "canvas-node-resizer", direction = "bottom") {
 }
 
 beforeEach(() => { Platform.isIosApp = false; });
+
+function markdownPenFixture(pointerId = 7) {
+  const result = fixture();
+  const { manager, control, canvas, ownerDocument } = result;
+  manager.pointerDrag = {
+    pointerId, pointerType: "pen", element: control, active: true,
+    surfacePenSideButton: true, mobileSelectionTimer: null,
+  };
+  manager.session = { id: "markdown-pen-drop" };
+  vi.spyOn(manager, "findPointerDropTarget").mockReturnValue({ canvas, ownerDocument });
+  const commit = vi.spyOn(manager, "commitDrop").mockImplementation(async () => {
+    await Promise.resolve();
+    manager.cleanupDrag();
+  });
+  return { ...result, commit };
+}
+
+describe("Markdown pen drop context menus", () => {
+  it("blocks the menu while the Markdown handle owns the pen", () => {
+    const { manager, event, container } = markdownPenFixture();
+    const menu = event(2, 7, container);
+    manager.handleCanvasPenContextMenu(menu);
+    expect(menu.preventDefault).toHaveBeenCalledOnce();
+    expect(menu.stopImmediatePropagation).toHaveBeenCalledOnce();
+  });
+
+  it.each(["pen", "legacy"])("blocks the delayed %s menu after the Canvas commit clears the drag", async (kind) => {
+    const { manager, event, container, commit } = markdownPenFixture();
+    const release = manager.endPointerDrag(event(0));
+    const duringCommit = event(2, 7, container);
+    manager.handleCanvasPenContextMenu(duringCommit);
+    expect(duringCommit.preventDefault).toHaveBeenCalledOnce();
+    await release;
+    expect(manager.pointerDrag).toBeNull();
+    expect(commit).toHaveBeenCalledOnce();
+    const delayed = event(2, 7, container);
+    if (kind === "legacy") Object.assign(delayed, { pointerType: undefined });
+    manager.handleCanvasPenContextMenu(delayed);
+    expect(delayed.stopImmediatePropagation).toHaveBeenCalledOnce();
+    const next = event(2, 7, container);
+    manager.handleCanvasPenContextMenu(next);
+    expect(next.preventDefault).not.toHaveBeenCalled();
+  });
+
+  it("keeps the delayed guard when capture is lost during an asynchronous drop", async () => {
+    const { manager, event, container } = markdownPenFixture();
+    const release = manager.endPointerDrag(event(0));
+    manager.cancelPointerDrag(7);
+    await release;
+    const delayed = event(2, 7, container);
+    manager.handleCanvasPenContextMenu(delayed);
+    expect(delayed.preventDefault).toHaveBeenCalledOnce();
+  });
+
+  it("blocks the recorded Windows menu whose pointer ID changes after pen release", async () => {
+    const { manager, event, container } = markdownPenFixture(18);
+    await manager.endPointerDrag({ ...event(0, 18), button: 2, clientX: 622, clientY: 1033.3333740234375 });
+    const delayed = { ...event(2, 1, container), buttons: 0, clientX: 622, clientY: 1033 };
+    manager.handleCanvasPenContextMenu(delayed);
+    expect(delayed.preventDefault).toHaveBeenCalledOnce();
+    expect(delayed.stopImmediatePropagation).toHaveBeenCalledOnce();
+  });
+
+  it("leaves mouse, keyboard, distant pens and other windows alone", async () => {
+    const { manager, event, container } = markdownPenFixture();
+    await manager.endPointerDrag(event(0));
+    const menus = [
+      { ...event(2), pointerType: "mouse" },
+      { ...event(0), pointerType: undefined, clientX: 0, clientY: 0 },
+      { ...event(2, 8), clientX: 500 },
+      event(2, 7, { nodeType: 1, ownerDocument: {} }),
+      { ...event(2), pointerType: undefined, clientX: 500 },
+    ];
+    for (const menu of menus) {
+      manager.handleCanvasPenContextMenu(menu);
+      expect(menu.preventDefault).not.toHaveBeenCalled();
+    }
+    const actualTail = event(2, 7, container);
+    manager.handleCanvasPenContextMenu(actualTail);
+    expect(actualTail.preventDefault).toHaveBeenCalledOnce();
+  });
+
+  it.each(["new-input", "expired", "window-blur"])("clears the release guard on %s", async (reason) => {
+    const { manager, event, ownerDocument } = markdownPenFixture();
+    await manager.endPointerDrag(event(0));
+    if (reason === "new-input") manager.handleCanvasPenPointerDown({ ...event(2), pointerType: "mouse" });
+    if (reason === "window-blur") manager.cancelCanvasInputs(ownerDocument as unknown as Document);
+    const clock = reason === "expired" ? vi.spyOn(Date, "now").mockReturnValue(Date.now() + 2_000) : null;
+    try {
+      const menu = { ...event(2), pointerType: undefined };
+      manager.handleCanvasPenContextMenu(menu);
+      expect(menu.preventDefault).not.toHaveBeenCalled();
+    } finally {
+      clock?.mockRestore();
+    }
+  });
+
+  it("cancels a Markdown pen drag when its owner window loses focus", () => {
+    const { manager, event, ownerDocument, commit } = markdownPenFixture();
+    manager.cancelCanvasInputs(ownerDocument as unknown as Document);
+    expect(manager.pointerDrag).toBeNull();
+    expect(commit).not.toHaveBeenCalled();
+    const menu = event(2);
+    manager.handleCanvasPenContextMenu(menu);
+    expect(menu.preventDefault).not.toHaveBeenCalled();
+  });
+});
 
 describe("iOS finger and Pencil mapping", () => {
   beforeEach(() => { Platform.isIosApp = true; });

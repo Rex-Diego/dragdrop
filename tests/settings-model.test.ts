@@ -9,6 +9,15 @@ import {
 } from "../src/settings-model";
 
 describe("action-oriented modifier settings", () => {
+  it("defaults new Canvas appearance settings and preserves saved choices", () => {
+    expect(mergeSettings(undefined)).toMatchObject({ autoFitNodeHeight: true, hideNodeBorder: false });
+    expect(mergeSettings({ autoFitNodeHeight: false, hideNodeBorder: true }))
+      .toMatchObject({ autoFitNodeHeight: false, hideNodeBorder: true });
+    const invalid = { autoFitNodeHeight: "false", hideNodeBorder: 1 } as unknown as Parameters<typeof mergeSettings>[0];
+    expect(mergeSettings(invalid))
+      .toMatchObject({ autoFitNodeHeight: true, hideNodeBorder: false });
+  });
+
   it("projects the default chord bindings as one modifier per action", () => {
     expect(assignedModifierForAction(DEFAULT_SETTINGS.canvasBindings, "link-source")).toBe("none");
     expect(assignedModifierForAction(DEFAULT_SETTINGS.canvasBindings, "create-note")).toBe("primary");

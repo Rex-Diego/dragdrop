@@ -19,6 +19,8 @@ DragDrop is focused on the Markdown → Canvas and Markdown → Markdown reading
 
 Modifier actions are configurable. The action is resolved when the block is dropped, so you can change the modifier during the drag.
 
+在 Markdown → Canvas 设置组中，**Canvas 卡片高度自适应**默认开启，创建后按内容调整一次高度；关闭后保持设置的初始高度。**隐藏新 Canvas 卡片边框**默认关闭，开启后为新拖入的卡片设置 Advanced Canvas 的 `styleAttributes.border = "invisible"`。隐藏效果需要启用 Advanced Canvas 的节点样式功能。两个开关独立生效，只影响后续拖放，不修改已有卡片。
+
 When a dragged block is already a standalone embed such as `![[Books/Source#^abc123]]`, a Canvas reference points directly to `Books/Source#^abc123`. DragDrop does not append another block ID to the source note. If several blocks are selected, ordinary blocks and existing embeds are resolved independently; an unresolved embedded target cancels the whole Canvas drop before any source ID is written.
 
 ### Markdown to Markdown

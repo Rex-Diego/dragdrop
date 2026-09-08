@@ -4,6 +4,26 @@
 实现名为 `dragdrop` 的 Obsidian 插件：删除 CardNote 的搜索、Excalidraw 和窗口管理功能，保留并重构 Markdown→Canvas 拖拽；阶段 6 实现 Markdown→Markdown 直通拖拽和 Canvas 归纳按钮，阶段 7 实现可编辑块嵌入，阶段 8 选择性融合 obsidian-dragger 的结构重排、多选、块菜单、跨文件目标、视觉和移动端交互。鼠标链路支持桌面端与弹出窗口，触控链路优先支持 Surface 并为 iPad 提供能力守卫下的实验兼容。
 
 ## 当前阶段
+当前发布任务（2026-09-09）：发布 0.1.11，包含卡片外观开关和 Surface Pen 菜单修复。
+- [x] 用户确认全部本轮问题解决，并授权 commit、push、release。
+- [ ] 更新版本、生产验证、提交并推送分支与 tag。
+- [ ] 创建正式 Release 并验证三附件哈希。
+
+当前插入任务（2026-09-09）：Surface Pen 从 Markdown 拖入 Canvas 后右键菜单残留。
+- [x] 定位 contextmenu 拦截仅覆盖 Canvas 内笔势、未覆盖 Markdown pointerDrag。
+- [x] 用户实机否定首轮修复；抓到 contextmenu 指针 ID 从 18 变为 1，已按时间、落点和 document 修正匹配。
+- [x] lint 零错误/警告、typecheck、25 files / 242 tests、构建与本地插件部署。
+- [x] 用户实机确认 Surface Pen 从 Markdown → Canvas 拖放不再残留菜单。
+- [x] 核对三方部署哈希与运行时插件函数，确认 canvasread-dev 已加载首轮修复。
+- [x] 通过 Obsidian CLI 记录实际 Surface Pen 事件，补真实序列回归并清理探针。
+- [x] 修正版 lint/typecheck、243 tests、build 通过；部署并仅重载开发库 DragDrop。运行时事件重放确认菜单被拦截且普通鼠标右键不受影响。
+
+已完成插入任务（2026-09-09）：Markdown → Canvas 卡片高度自适应与隐藏边框开关。
+- [x] 核对现有一次性高度适配与 Advanced Canvas 的 `styleAttributes.border = "invisible"` 格式。
+- [x] 增加两个独立设置、接入新建卡片路径并覆盖回归。
+- [x] 完成 lint（零错误/警告）、typecheck、29 项定向测试、生产构建和两处插件 main.js 部署。
+- [x] 用户确认高度开关和隐藏边框问题已解决。
+
 阶段 8：obsidian-dragger 选择性融合（0.1.8 已发布；8.12 实施 iPad 手指平移、Pencil 操作映射；阶段 7 实机验收仍独立保留）
 
 ### 8.12：iPad 手指与 Pencil 分工

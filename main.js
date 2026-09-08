@@ -895,6 +895,219 @@ function isCanvasView(value) {
   return view.getViewType?.() === "canvas" && canvas !== void 0 && typeof canvas === "object";
 }
 
+// src/settings-model.ts
+var SETTINGS_SCHEMA_VERSION = 4;
+var DEFAULT_CROSS_MARKDOWN_EMBED_ALIAS = "\u{1F517}";
+var UNASSIGNED_MODIFIER = "unassigned";
+function assignedModifierForAction(bindings, action) {
+  return MODIFIER_CHORDS.find((chord) => bindings[chord] === action) ?? UNASSIGNED_MODIFIER;
+}
+function assignModifierToAction(bindings, action, modifier) {
+  for (const chord of MODIFIER_CHORDS) {
+    if (bindings[chord] === action) bindings[chord] = "inherit";
+  }
+  if (modifier === UNASSIGNED_MODIFIER) return;
+  bindings[modifier] = action;
+  for (const chord of MODIFIER_CHORDS) {
+    if (chord !== modifier && bindings[chord] === action) bindings[chord] = "inherit";
+  }
+}
+var DEFAULT_SETTINGS = {
+  schemaVersion: SETTINGS_SCHEMA_VERSION,
+  defaultFolder: "Distill",
+  folderStrategy: "fixed",
+  nodeWidth: 400,
+  initialNodeHeight: 200,
+  autoFitNodeHeight: true,
+  hideNodeBorder: false,
+  nodeGap: 40,
+  previewWidth: 400,
+  handlePosition: "right",
+  handleVisibility: "hover",
+  touchDropAction: "link-source",
+  surfacePenSideButtonDrag: true,
+  iosPencilMapping: true,
+  largeTouchHandles: true,
+  canvasSummaryButton: true,
+  editableBlockEmbeds: false,
+  structuralMarkdownMoves: true,
+  multiBlockSelection: true,
+  blockTypeMenu: true,
+  crossFileFileTargets: true,
+  crossMarkdownEmbedAlias: DEFAULT_CROSS_MARKDOWN_EMBED_ALIAS,
+  edgeAutoScroll: true,
+  autoScrollEdgePx: 60,
+  autoScrollMaxSpeed: 12,
+  preserveFoldState: true,
+  renumberOrderedLists: false,
+  mobileBlockInteractions: false,
+  selectionMenuAutoDismissSeconds: 3,
+  splitListItems: true,
+  listParentDisplay: "native-subtree",
+  titleFilenameMode: "auto",
+  canvasBindings: {
+    none: "link-source",
+    primary: "create-note",
+    shift: "inherit",
+    alt: "inherit",
+    "primary+shift": "inherit",
+    "primary+alt": "inherit",
+    "shift+alt": "inherit",
+    "primary+shift+alt": "inherit"
+  },
+  markdownBindings: {
+    none: "embed-source",
+    primary: "move",
+    shift: "inherit",
+    alt: "inherit",
+    "primary+shift": "inherit",
+    "primary+alt": "inherit",
+    "shift+alt": "inherit",
+    "primary+shift+alt": "inherit"
+  },
+  sameMarkdownBindings: {
+    none: "embed-source",
+    primary: "move",
+    shift: "inherit",
+    alt: "inherit",
+    "primary+shift": "inherit",
+    "primary+alt": "inherit",
+    "shift+alt": "inherit",
+    "primary+shift+alt": "inherit"
+  }
+};
+function clampSavedInteger(value, fallback, minimum, maximum) {
+  if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
+  return Math.min(maximum, Math.max(minimum, Math.trunc(value)));
+}
+function normalizeSelectionMenuAutoDismissSeconds(value) {
+  if (typeof value !== "number" || !Number.isFinite(value)) return void 0;
+  if (value < 0) return -1;
+  return Math.min(3600, value);
+}
+function normalizeCrossMarkdownEmbedAlias(value) {
+  if (typeof value !== "string") return DEFAULT_CROSS_MARKDOWN_EMBED_ALIAS;
+  return normalizeEmbedAlias(value);
+}
+function migrateSettings(loaded) {
+  const {
+    protectedFolders,
+    crossMarkdownEmbedAlias: savedCrossMarkdownEmbedAlias,
+    schemaVersion: savedSchemaVersion,
+    ...rest
+  } = loaded;
+  void savedCrossMarkdownEmbedAlias;
+  const version = typeof savedSchemaVersion === "number" && Number.isFinite(savedSchemaVersion) ? Math.max(0, Math.trunc(savedSchemaVersion)) : 0;
+  if (version < SETTINGS_SCHEMA_VERSION && protectedFolders !== void 0) {
+    return {
+      ...rest,
+      schemaVersion: SETTINGS_SCHEMA_VERSION
+    };
+  }
+  return {
+    ...rest,
+    schemaVersion: SETTINGS_SCHEMA_VERSION
+  };
+}
+function mergeMarkdownBindings(loaded, legacyLinks, allowAliasLinks = true) {
+  const bindings = {
+    ...DEFAULT_SETTINGS.markdownBindings,
+    ...loaded
+  };
+  for (const chord of Object.keys(bindings)) {
+    if ((!allowAliasLinks || legacyLinks) && bindings[chord] === "link-source") {
+      bindings[chord] = "embed-source";
+    }
+  }
+  return bindings;
+}
+function mergeSettings(loaded) {
+  const loadedSettings = migrateSettings(loaded ?? {});
+  const loadedMarkdownBindings = loaded?.markdownBindings;
+  const loadedSameMarkdownBindings = loaded?.sameMarkdownBindings;
+  const legacyLinks = typeof loaded?.schemaVersion !== "number" || loaded.schemaVersion < 4;
+  const markdownBindings = mergeMarkdownBindings(loadedMarkdownBindings, legacyLinks);
+  const sameMarkdownBindings = mergeMarkdownBindings(
+    loadedSameMarkdownBindings ?? loadedMarkdownBindings,
+    legacyLinks,
+    false
+  );
+  const hasLegacyDefaults = legacyLinks && loadedMarkdownBindings?.none === "move" && loadedMarkdownBindings.primary === "link-source" && loadedMarkdownBindings["primary+shift"] === "embed-source";
+  if (hasLegacyDefaults) {
+    markdownBindings.none = DEFAULT_SETTINGS.markdownBindings.none;
+    markdownBindings.primary = DEFAULT_SETTINGS.markdownBindings.primary;
+    markdownBindings["primary+shift"] = DEFAULT_SETTINGS.markdownBindings["primary+shift"];
+    if (!loadedSameMarkdownBindings) {
+      sameMarkdownBindings.none = DEFAULT_SETTINGS.sameMarkdownBindings.none;
+      sameMarkdownBindings.primary = DEFAULT_SETTINGS.sameMarkdownBindings.primary;
+      sameMarkdownBindings["primary+shift"] = DEFAULT_SETTINGS.sameMarkdownBindings["primary+shift"];
+    }
+  }
+  return {
+    ...DEFAULT_SETTINGS,
+    ...loadedSettings,
+    schemaVersion: SETTINGS_SCHEMA_VERSION,
+    nodeWidth: clampSavedInteger(
+      loaded?.nodeWidth,
+      DEFAULT_SETTINGS.nodeWidth,
+      160,
+      1200
+    ),
+    initialNodeHeight: clampSavedInteger(
+      loaded?.initialNodeHeight,
+      DEFAULT_SETTINGS.initialNodeHeight,
+      80,
+      1200
+    ),
+    nodeGap: clampSavedInteger(loaded?.nodeGap, DEFAULT_SETTINGS.nodeGap, 0, 400),
+    autoFitNodeHeight: typeof loaded?.autoFitNodeHeight === "boolean" ? loaded.autoFitNodeHeight : DEFAULT_SETTINGS.autoFitNodeHeight,
+    hideNodeBorder: typeof loaded?.hideNodeBorder === "boolean" ? loaded.hideNodeBorder : DEFAULT_SETTINGS.hideNodeBorder,
+    previewWidth: clampSavedInteger(
+      loaded?.previewWidth,
+      DEFAULT_SETTINGS.previewWidth,
+      200,
+      1e3
+    ),
+    handlePosition: loaded?.handlePosition === "left" || loaded?.handlePosition === "right" ? loaded.handlePosition : DEFAULT_SETTINGS.handlePosition,
+    handleVisibility: loaded?.handleVisibility === "hover" || loaded?.handleVisibility === "always" ? loaded.handleVisibility : DEFAULT_SETTINGS.handleVisibility,
+    surfacePenSideButtonDrag: typeof loaded?.surfacePenSideButtonDrag === "boolean" ? loaded.surfacePenSideButtonDrag : DEFAULT_SETTINGS.surfacePenSideButtonDrag,
+    iosPencilMapping: typeof loaded?.iosPencilMapping === "boolean" ? loaded.iosPencilMapping : DEFAULT_SETTINGS.iosPencilMapping,
+    largeTouchHandles: typeof loaded?.largeTouchHandles === "boolean" ? loaded.largeTouchHandles : DEFAULT_SETTINGS.largeTouchHandles,
+    canvasSummaryButton: typeof loaded?.canvasSummaryButton === "boolean" ? loaded.canvasSummaryButton : DEFAULT_SETTINGS.canvasSummaryButton,
+    editableBlockEmbeds: typeof loaded?.editableBlockEmbeds === "boolean" ? loaded.editableBlockEmbeds : DEFAULT_SETTINGS.editableBlockEmbeds,
+    structuralMarkdownMoves: typeof loaded?.structuralMarkdownMoves === "boolean" ? loaded.structuralMarkdownMoves : DEFAULT_SETTINGS.structuralMarkdownMoves,
+    multiBlockSelection: typeof loaded?.multiBlockSelection === "boolean" ? loaded.multiBlockSelection : DEFAULT_SETTINGS.multiBlockSelection,
+    blockTypeMenu: typeof loaded?.blockTypeMenu === "boolean" ? loaded.blockTypeMenu : DEFAULT_SETTINGS.blockTypeMenu,
+    crossFileFileTargets: typeof loaded?.crossFileFileTargets === "boolean" ? loaded.crossFileFileTargets : DEFAULT_SETTINGS.crossFileFileTargets,
+    crossMarkdownEmbedAlias: normalizeCrossMarkdownEmbedAlias(
+      loaded?.crossMarkdownEmbedAlias
+    ),
+    edgeAutoScroll: typeof loaded?.edgeAutoScroll === "boolean" ? loaded.edgeAutoScroll : DEFAULT_SETTINGS.edgeAutoScroll,
+    autoScrollEdgePx: clampSavedInteger(
+      loaded?.autoScrollEdgePx,
+      DEFAULT_SETTINGS.autoScrollEdgePx,
+      20,
+      200
+    ),
+    autoScrollMaxSpeed: clampSavedInteger(
+      loaded?.autoScrollMaxSpeed,
+      DEFAULT_SETTINGS.autoScrollMaxSpeed,
+      1,
+      30
+    ),
+    preserveFoldState: typeof loaded?.preserveFoldState === "boolean" ? loaded.preserveFoldState : DEFAULT_SETTINGS.preserveFoldState,
+    renumberOrderedLists: typeof loaded?.renumberOrderedLists === "boolean" ? loaded.renumberOrderedLists : DEFAULT_SETTINGS.renumberOrderedLists,
+    mobileBlockInteractions: typeof loaded?.mobileBlockInteractions === "boolean" ? loaded.mobileBlockInteractions : DEFAULT_SETTINGS.mobileBlockInteractions,
+    selectionMenuAutoDismissSeconds: normalizeSelectionMenuAutoDismissSeconds(loaded?.selectionMenuAutoDismissSeconds) ?? DEFAULT_SETTINGS.selectionMenuAutoDismissSeconds,
+    canvasBindings: {
+      ...DEFAULT_SETTINGS.canvasBindings,
+      ...loaded?.canvasBindings
+    },
+    markdownBindings,
+    sameMarkdownBindings
+  };
+}
+
 // src/canvas-adapter.ts
 function isNodeLike(value) {
   return typeof value === "object" && value !== null && "nodeType" in value;
@@ -977,7 +1190,7 @@ var CanvasAdapter = class {
   isTargetConnected(target) {
     return target.view.containerEl.isConnected && target.view.containerEl.ownerDocument === target.ownerDocument && target.canvas.readonly !== true;
   }
-  async createVerticalItems(target, items, width, initialHeight, gap) {
+  async createVerticalItems(target, items, width, initialHeight, gap, options = DEFAULT_SETTINGS) {
     const created = [];
     let y = target.point.y;
     for (const item of items) {
@@ -985,8 +1198,9 @@ var CanvasAdapter = class {
       try {
         const node = this.createNode(target, item, { x: target.point.x, y }, width, initialHeight);
         created.push(node);
+        if (options.hideNodeBorder) this.hideBorder(node);
         await Promise.resolve(target.canvas.requestFrame());
-        const fittedHeight = await this.fitHeight(node, target.window, initialHeight);
+        const fittedHeight = options.autoFitNodeHeight ? await this.fitHeight(node, target.window, initialHeight) : this.safeHeight(node.height, initialHeight);
         y += fittedHeight + gap;
       } catch (error) {
         console.error("DragDrop could not create a Canvas node.", error);
@@ -997,6 +1211,22 @@ var CanvasAdapter = class {
       await Promise.resolve(target.canvas.requestSave());
     }
     return created;
+  }
+  hideBorder(node) {
+    if (!node.getData || !node.setData) return;
+    try {
+      const data = node.getData();
+      const styles = data.styleAttributes;
+      node.setData({
+        ...data,
+        styleAttributes: {
+          ...styles && typeof styles === "object" && !Array.isArray(styles) ? styles : {},
+          border: "invisible"
+        }
+      });
+    } catch (error) {
+      console.error("DragDrop could not hide a Canvas node border.", error);
+    }
   }
   createNode(target, item, point, width, initialHeight) {
     const common = {
@@ -2226,6 +2456,7 @@ var DragSessionManager = class extends import_obsidian6.Component {
   iosSuppressedTouches = /* @__PURE__ */ new Map();
   iosClickSuppression = null;
   canvasPenContextMenuSuppression = null;
+  markdownPenContextMenuSuppression = null;
   syntheticCanvasEvents = /* @__PURE__ */ new WeakSet();
   ghostElement = null;
   ghostComponent = null;
@@ -2266,6 +2497,7 @@ var DragSessionManager = class extends import_obsidian6.Component {
   onunload() {
     for (const document of this.documentComponents.keys()) this.cancelCanvasInputs(document);
     this.cleanupDrag();
+    this.markdownPenContextMenuSuppression = null;
     this.cancelSelectionPointer();
     this.blockSelections.clear();
     this.documentComponents.clear();
@@ -2400,6 +2632,7 @@ var DragSessionManager = class extends import_obsidian6.Component {
     }
     try {
       element.setPointerCapture(event.pointerId);
+      this.rememberMarkdownPenContextMenu(this.pointerDrag, event);
     } catch {
       this.clearMobileSelectionTimer(this.pointerDrag);
       this.pointerDrag = null;
@@ -2408,6 +2641,7 @@ var DragSessionManager = class extends import_obsidian6.Component {
   movePointerDrag(event) {
     const pointerDrag = this.pointerDrag;
     if (!pointerDrag || !matchesPointerDrag(pointerDrag.pointerId, event.pointerId)) return;
+    this.rememberMarkdownPenContextMenu(pointerDrag, event);
     event.preventDefault();
     if (pointerDrag.mobileSelectionMode) {
       const handle = this.handleAtPoint(pointerDrag.view, event.clientX, event.clientY);
@@ -2469,6 +2703,7 @@ var DragSessionManager = class extends import_obsidian6.Component {
     }
     const pointerDrag = this.pointerDrag;
     if (!pointerDrag || !matchesPointerDrag(pointerDrag.pointerId, event.pointerId)) return;
+    this.rememberMarkdownPenContextMenu(pointerDrag, event);
     event.preventDefault();
     if (pointerDrag.mobileSelectionMode) {
       this.cleanupDrag();
@@ -3086,14 +3321,16 @@ var DragSessionManager = class extends import_obsidian6.Component {
   }
   cancelCanvasInputs(document) {
     if (this.canvasTouchNavigation?.target.ownerDocument === document) this.cancelTouchNavigation(false);
-    if (this.canvasPenDrag?.dispatchTarget.ownerDocument === document || this.canvasPenNativePointer?.ownerDocument === document || this.iosPencilEnabled && this.pointerDrag?.element.ownerDocument === document) this.cleanupDrag();
+    if (this.canvasPenDrag?.dispatchTarget.ownerDocument === document || this.canvasPenNativePointer?.ownerDocument === document || (this.iosPencilEnabled || this.pointerDrag?.pointerType === "pen") && this.pointerDrag?.element.ownerDocument === document) this.cleanupDrag();
     for (const [id, doc] of this.iosBlockedPointers) if (doc === document) this.iosBlockedPointers.delete(id);
     for (const [id, doc] of this.iosSuppressedTouches) if (doc === document) this.iosSuppressedTouches.delete(id);
     if (this.iosClickSuppression?.ownerDocument === document) this.iosClickSuppression = null;
     if (this.canvasPenPassthroughPointer?.ownerDocument === document) this.canvasPenPassthroughPointer = null;
+    if (this.markdownPenContextMenuSuppression?.ownerDocument === document) this.markdownPenContextMenuSuppression = null;
   }
   handleCanvasPenPointerDown(event) {
     if (this.syntheticCanvasEvents.has(event)) return;
+    this.markdownPenContextMenuSuppression = null;
     const iosMapping = this.iosPencilEnabled;
     const interactionType = iosMapping && event.pointerType === "touch" ? "pan" : canvasPenInteractionForEvent(event, iosMapping);
     if (!interactionType) return;
@@ -3296,6 +3533,7 @@ var DragSessionManager = class extends import_obsidian6.Component {
     event.stopImmediatePropagation();
   }
   handleCanvasPenContextMenu(event) {
+    if (this.suppressMarkdownPenContextMenu(event)) return;
     const dragDocument = this.canvasPenDrag?.dispatchTarget.ownerDocument ?? this.canvasPenNativePointer?.ownerDocument;
     const suppression = this.canvasPenContextMenuSuppression;
     const ownerDocument = dragDocument ?? suppression?.ownerDocument;
@@ -3308,6 +3546,38 @@ var DragSessionManager = class extends import_obsidian6.Component {
     event.preventDefault();
     event.stopImmediatePropagation();
     if (!dragDocument) this.canvasPenContextMenuSuppression = null;
+  }
+  rememberMarkdownPenContextMenu(drag, event) {
+    if (drag.pointerType !== "pen") return;
+    this.markdownPenContextMenuSuppression = {
+      ownerDocument: drag.element.ownerDocument,
+      pointerId: drag.pointerId,
+      x: event.clientX,
+      y: event.clientY,
+      expiresAt: Date.now() + 1e3
+    };
+  }
+  suppressMarkdownPenContextMenu(event) {
+    const drag = this.pointerDrag?.pointerType === "pen" ? this.pointerDrag : null;
+    const suppression = this.markdownPenContextMenuSuppression;
+    const ownerDocument = drag?.element.ownerDocument ?? suppression?.ownerDocument;
+    if (!ownerDocument || !this.isSameEventDocument(event, ownerDocument)) return false;
+    if (!drag && suppression && suppression.expiresAt < Date.now()) {
+      this.markdownPenContextMenuSuppression = null;
+      return false;
+    }
+    const pointerType = "pointerType" in event ? event.pointerType : void 0;
+    if (pointerType === "pen") {
+      const pointerId = drag?.pointerId ?? suppression?.pointerId;
+      if ("pointerId" in event && event.pointerId !== pointerId && (!suppression || suppression.expiresAt < Date.now() || Math.hypot(event.clientX - suppression.x, event.clientY - suppression.y) > 24)) return false;
+    } else {
+      if (pointerType || event.button !== 2) return false;
+      if (!drag && suppression && Math.hypot(event.clientX - suppression.x, event.clientY - suppression.y) > 24) return false;
+    }
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    if (!drag) this.markdownPenContextMenuSuppression = null;
+    return true;
   }
   beginCanvasPenDrag(event, interaction) {
     const captureTarget = this.findPointerCaptureElement(interaction.dispatchTarget);
@@ -4045,7 +4315,11 @@ var DragSessionManager = class extends import_obsidian6.Component {
       items,
       this.host.config.nodeWidth,
       this.host.config.initialNodeHeight,
-      this.host.config.nodeGap
+      this.host.config.nodeGap,
+      {
+        autoFitNodeHeight: this.host.config.autoFitNodeHeight,
+        hideNodeBorder: this.host.config.hideNodeBorder
+      }
     );
   }
   planReferences(state, units, sourceFile) {
@@ -5981,215 +6255,6 @@ var SelectionMenuFeature = class extends import_obsidian9.Component {
 // src/settings-tab.ts
 var import_obsidian10 = require("obsidian");
 
-// src/settings-model.ts
-var SETTINGS_SCHEMA_VERSION = 4;
-var DEFAULT_CROSS_MARKDOWN_EMBED_ALIAS = "\u{1F517}";
-var UNASSIGNED_MODIFIER = "unassigned";
-function assignedModifierForAction(bindings, action) {
-  return MODIFIER_CHORDS.find((chord) => bindings[chord] === action) ?? UNASSIGNED_MODIFIER;
-}
-function assignModifierToAction(bindings, action, modifier) {
-  for (const chord of MODIFIER_CHORDS) {
-    if (bindings[chord] === action) bindings[chord] = "inherit";
-  }
-  if (modifier === UNASSIGNED_MODIFIER) return;
-  bindings[modifier] = action;
-  for (const chord of MODIFIER_CHORDS) {
-    if (chord !== modifier && bindings[chord] === action) bindings[chord] = "inherit";
-  }
-}
-var DEFAULT_SETTINGS = {
-  schemaVersion: SETTINGS_SCHEMA_VERSION,
-  defaultFolder: "Distill",
-  folderStrategy: "fixed",
-  nodeWidth: 400,
-  initialNodeHeight: 200,
-  nodeGap: 40,
-  previewWidth: 400,
-  handlePosition: "right",
-  handleVisibility: "hover",
-  touchDropAction: "link-source",
-  surfacePenSideButtonDrag: true,
-  iosPencilMapping: true,
-  largeTouchHandles: true,
-  canvasSummaryButton: true,
-  editableBlockEmbeds: false,
-  structuralMarkdownMoves: true,
-  multiBlockSelection: true,
-  blockTypeMenu: true,
-  crossFileFileTargets: true,
-  crossMarkdownEmbedAlias: DEFAULT_CROSS_MARKDOWN_EMBED_ALIAS,
-  edgeAutoScroll: true,
-  autoScrollEdgePx: 60,
-  autoScrollMaxSpeed: 12,
-  preserveFoldState: true,
-  renumberOrderedLists: false,
-  mobileBlockInteractions: false,
-  selectionMenuAutoDismissSeconds: 3,
-  splitListItems: true,
-  listParentDisplay: "native-subtree",
-  titleFilenameMode: "auto",
-  canvasBindings: {
-    none: "link-source",
-    primary: "create-note",
-    shift: "inherit",
-    alt: "inherit",
-    "primary+shift": "inherit",
-    "primary+alt": "inherit",
-    "shift+alt": "inherit",
-    "primary+shift+alt": "inherit"
-  },
-  markdownBindings: {
-    none: "embed-source",
-    primary: "move",
-    shift: "inherit",
-    alt: "inherit",
-    "primary+shift": "inherit",
-    "primary+alt": "inherit",
-    "shift+alt": "inherit",
-    "primary+shift+alt": "inherit"
-  },
-  sameMarkdownBindings: {
-    none: "embed-source",
-    primary: "move",
-    shift: "inherit",
-    alt: "inherit",
-    "primary+shift": "inherit",
-    "primary+alt": "inherit",
-    "shift+alt": "inherit",
-    "primary+shift+alt": "inherit"
-  }
-};
-function clampSavedInteger(value, fallback, minimum, maximum) {
-  if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
-  return Math.min(maximum, Math.max(minimum, Math.trunc(value)));
-}
-function normalizeSelectionMenuAutoDismissSeconds(value) {
-  if (typeof value !== "number" || !Number.isFinite(value)) return void 0;
-  if (value < 0) return -1;
-  return Math.min(3600, value);
-}
-function normalizeCrossMarkdownEmbedAlias(value) {
-  if (typeof value !== "string") return DEFAULT_CROSS_MARKDOWN_EMBED_ALIAS;
-  return normalizeEmbedAlias(value);
-}
-function migrateSettings(loaded) {
-  const {
-    protectedFolders,
-    crossMarkdownEmbedAlias: savedCrossMarkdownEmbedAlias,
-    schemaVersion: savedSchemaVersion,
-    ...rest
-  } = loaded;
-  void savedCrossMarkdownEmbedAlias;
-  const version = typeof savedSchemaVersion === "number" && Number.isFinite(savedSchemaVersion) ? Math.max(0, Math.trunc(savedSchemaVersion)) : 0;
-  if (version < SETTINGS_SCHEMA_VERSION && protectedFolders !== void 0) {
-    return {
-      ...rest,
-      schemaVersion: SETTINGS_SCHEMA_VERSION
-    };
-  }
-  return {
-    ...rest,
-    schemaVersion: SETTINGS_SCHEMA_VERSION
-  };
-}
-function mergeMarkdownBindings(loaded, legacyLinks, allowAliasLinks = true) {
-  const bindings = {
-    ...DEFAULT_SETTINGS.markdownBindings,
-    ...loaded
-  };
-  for (const chord of Object.keys(bindings)) {
-    if ((!allowAliasLinks || legacyLinks) && bindings[chord] === "link-source") {
-      bindings[chord] = "embed-source";
-    }
-  }
-  return bindings;
-}
-function mergeSettings(loaded) {
-  const loadedSettings = migrateSettings(loaded ?? {});
-  const loadedMarkdownBindings = loaded?.markdownBindings;
-  const loadedSameMarkdownBindings = loaded?.sameMarkdownBindings;
-  const legacyLinks = typeof loaded?.schemaVersion !== "number" || loaded.schemaVersion < 4;
-  const markdownBindings = mergeMarkdownBindings(loadedMarkdownBindings, legacyLinks);
-  const sameMarkdownBindings = mergeMarkdownBindings(
-    loadedSameMarkdownBindings ?? loadedMarkdownBindings,
-    legacyLinks,
-    false
-  );
-  const hasLegacyDefaults = legacyLinks && loadedMarkdownBindings?.none === "move" && loadedMarkdownBindings.primary === "link-source" && loadedMarkdownBindings["primary+shift"] === "embed-source";
-  if (hasLegacyDefaults) {
-    markdownBindings.none = DEFAULT_SETTINGS.markdownBindings.none;
-    markdownBindings.primary = DEFAULT_SETTINGS.markdownBindings.primary;
-    markdownBindings["primary+shift"] = DEFAULT_SETTINGS.markdownBindings["primary+shift"];
-    if (!loadedSameMarkdownBindings) {
-      sameMarkdownBindings.none = DEFAULT_SETTINGS.sameMarkdownBindings.none;
-      sameMarkdownBindings.primary = DEFAULT_SETTINGS.sameMarkdownBindings.primary;
-      sameMarkdownBindings["primary+shift"] = DEFAULT_SETTINGS.sameMarkdownBindings["primary+shift"];
-    }
-  }
-  return {
-    ...DEFAULT_SETTINGS,
-    ...loadedSettings,
-    schemaVersion: SETTINGS_SCHEMA_VERSION,
-    nodeWidth: clampSavedInteger(
-      loaded?.nodeWidth,
-      DEFAULT_SETTINGS.nodeWidth,
-      160,
-      1200
-    ),
-    initialNodeHeight: clampSavedInteger(
-      loaded?.initialNodeHeight,
-      DEFAULT_SETTINGS.initialNodeHeight,
-      80,
-      1200
-    ),
-    nodeGap: clampSavedInteger(loaded?.nodeGap, DEFAULT_SETTINGS.nodeGap, 0, 400),
-    previewWidth: clampSavedInteger(
-      loaded?.previewWidth,
-      DEFAULT_SETTINGS.previewWidth,
-      200,
-      1e3
-    ),
-    handlePosition: loaded?.handlePosition === "left" || loaded?.handlePosition === "right" ? loaded.handlePosition : DEFAULT_SETTINGS.handlePosition,
-    handleVisibility: loaded?.handleVisibility === "hover" || loaded?.handleVisibility === "always" ? loaded.handleVisibility : DEFAULT_SETTINGS.handleVisibility,
-    surfacePenSideButtonDrag: typeof loaded?.surfacePenSideButtonDrag === "boolean" ? loaded.surfacePenSideButtonDrag : DEFAULT_SETTINGS.surfacePenSideButtonDrag,
-    iosPencilMapping: typeof loaded?.iosPencilMapping === "boolean" ? loaded.iosPencilMapping : DEFAULT_SETTINGS.iosPencilMapping,
-    largeTouchHandles: typeof loaded?.largeTouchHandles === "boolean" ? loaded.largeTouchHandles : DEFAULT_SETTINGS.largeTouchHandles,
-    canvasSummaryButton: typeof loaded?.canvasSummaryButton === "boolean" ? loaded.canvasSummaryButton : DEFAULT_SETTINGS.canvasSummaryButton,
-    editableBlockEmbeds: typeof loaded?.editableBlockEmbeds === "boolean" ? loaded.editableBlockEmbeds : DEFAULT_SETTINGS.editableBlockEmbeds,
-    structuralMarkdownMoves: typeof loaded?.structuralMarkdownMoves === "boolean" ? loaded.structuralMarkdownMoves : DEFAULT_SETTINGS.structuralMarkdownMoves,
-    multiBlockSelection: typeof loaded?.multiBlockSelection === "boolean" ? loaded.multiBlockSelection : DEFAULT_SETTINGS.multiBlockSelection,
-    blockTypeMenu: typeof loaded?.blockTypeMenu === "boolean" ? loaded.blockTypeMenu : DEFAULT_SETTINGS.blockTypeMenu,
-    crossFileFileTargets: typeof loaded?.crossFileFileTargets === "boolean" ? loaded.crossFileFileTargets : DEFAULT_SETTINGS.crossFileFileTargets,
-    crossMarkdownEmbedAlias: normalizeCrossMarkdownEmbedAlias(
-      loaded?.crossMarkdownEmbedAlias
-    ),
-    edgeAutoScroll: typeof loaded?.edgeAutoScroll === "boolean" ? loaded.edgeAutoScroll : DEFAULT_SETTINGS.edgeAutoScroll,
-    autoScrollEdgePx: clampSavedInteger(
-      loaded?.autoScrollEdgePx,
-      DEFAULT_SETTINGS.autoScrollEdgePx,
-      20,
-      200
-    ),
-    autoScrollMaxSpeed: clampSavedInteger(
-      loaded?.autoScrollMaxSpeed,
-      DEFAULT_SETTINGS.autoScrollMaxSpeed,
-      1,
-      30
-    ),
-    preserveFoldState: typeof loaded?.preserveFoldState === "boolean" ? loaded.preserveFoldState : DEFAULT_SETTINGS.preserveFoldState,
-    renumberOrderedLists: typeof loaded?.renumberOrderedLists === "boolean" ? loaded.renumberOrderedLists : DEFAULT_SETTINGS.renumberOrderedLists,
-    mobileBlockInteractions: typeof loaded?.mobileBlockInteractions === "boolean" ? loaded.mobileBlockInteractions : DEFAULT_SETTINGS.mobileBlockInteractions,
-    selectionMenuAutoDismissSeconds: normalizeSelectionMenuAutoDismissSeconds(loaded?.selectionMenuAutoDismissSeconds) ?? DEFAULT_SETTINGS.selectionMenuAutoDismissSeconds,
-    canvasBindings: {
-      ...DEFAULT_SETTINGS.canvasBindings,
-      ...loaded?.canvasBindings
-    },
-    markdownBindings,
-    sameMarkdownBindings
-  };
-}
-
 // src/settings-i18n.ts
 var EN_SETTINGS_TEXT = {
   headingMarkdown: "Markdown blocks",
@@ -6246,7 +6311,11 @@ var EN_SETTINGS_TEXT = {
   nodeWidthName: "Canvas card width",
   nodeWidthDescription: "Fixed width of Canvas cards created by a drop.",
   initialNodeHeightName: "Initial Canvas card height",
-  initialNodeHeightDescription: "Temporary card height used until the rendered content is measured.",
+  initialNodeHeightDescription: "Starting height for new cards. Kept when automatic height fitting is off.",
+  autoFitNodeHeightName: "Fit Canvas card height to content",
+  autoFitNodeHeightDescription: "Adjust each new card to its content once after a drop. Turn off to keep the initial height.",
+  hideNodeBorderName: "Hide new Canvas card borders",
+  hideNodeBorderDescription: "Set the border of newly dropped cards to invisible. Requires Advanced Canvas node styling. Existing cards are unchanged.",
   verticalGapName: "Card spacing",
   verticalGapDescription: "Vertical space between multiple cards created by one drop.",
   previewWidthName: "Drag preview width",
@@ -6349,7 +6418,11 @@ var ZH_SETTINGS_TEXT = {
   nodeWidthName: "Canvas \u5361\u7247\u5BBD\u5EA6",
   nodeWidthDescription: "\u62D6\u653E\u540E\u521B\u5EFA\u7684 Canvas \u5361\u7247\u56FA\u5B9A\u5BBD\u5EA6\u3002",
   initialNodeHeightName: "Canvas \u5361\u7247\u521D\u59CB\u9AD8\u5EA6",
-  initialNodeHeightDescription: "\u5185\u5BB9\u5B8C\u6210\u6D4B\u91CF\u524D\u4E34\u65F6\u4F7F\u7528\u7684\u5361\u7247\u9AD8\u5EA6\u3002",
+  initialNodeHeightDescription: "\u65B0\u5361\u7247\u7684\u8D77\u59CB\u9AD8\u5EA6\uFF1B\u5173\u95ED\u9AD8\u5EA6\u81EA\u9002\u5E94\u540E\u4FDD\u6301\u6B64\u9AD8\u5EA6\u3002",
+  autoFitNodeHeightName: "Canvas \u5361\u7247\u9AD8\u5EA6\u81EA\u9002\u5E94",
+  autoFitNodeHeightDescription: "\u62D6\u653E\u540E\u6309\u5185\u5BB9\u8C03\u6574\u4E00\u6B21\u65B0\u5361\u7247\u7684\u9AD8\u5EA6\u3002\u5173\u95ED\u540E\u4F7F\u7528\u4E0A\u65B9\u8BBE\u7F6E\u7684\u521D\u59CB\u9AD8\u5EA6\u3002",
+  hideNodeBorderName: "\u9690\u85CF\u65B0 Canvas \u5361\u7247\u8FB9\u6846",
+  hideNodeBorderDescription: "\u5C06\u65B0\u62D6\u5165\u5361\u7247\u7684\u8FB9\u6846\u8BBE\u4E3A invisible\u3002\u9700\u8981\u542F\u7528 Advanced Canvas \u7684\u8282\u70B9\u6837\u5F0F\u529F\u80FD\uFF0C\u4E0D\u5F71\u54CD\u5DF2\u6709\u5361\u7247\u3002",
   verticalGapName: "\u5361\u7247\u95F4\u8DDD",
   verticalGapDescription: "\u4E00\u6B21\u62D6\u653E\u521B\u5EFA\u591A\u5F20\u5361\u7247\u65F6\uFF0C\u5361\u7247\u4E4B\u95F4\u7684\u5782\u76F4\u8DDD\u79BB\u3002",
   previewWidthName: "\u62D6\u62FD\u9884\u89C8\u5BBD\u5EA6",
@@ -6652,6 +6725,16 @@ var DragDropSettingTab = class extends import_obsidian10.PluginSettingTab {
             control: { type: "number", key: "initialNodeHeight", min: 80, max: 1200, step: 1 }
           },
           {
+            name: text.autoFitNodeHeightName,
+            desc: text.autoFitNodeHeightDescription,
+            control: { type: "toggle", key: "autoFitNodeHeight" }
+          },
+          {
+            name: text.hideNodeBorderName,
+            desc: text.hideNodeBorderDescription,
+            control: { type: "toggle", key: "hideNodeBorder" }
+          },
+          {
             name: text.verticalGapName,
             desc: text.verticalGapDescription,
             control: { type: "number", key: "nodeGap", min: 0, max: 400, step: 1 }
@@ -6888,6 +6971,10 @@ var DragDropSettingTab = class extends import_obsidian10.PluginSettingTab {
         return this.host.config.nodeWidth;
       case "initialNodeHeight":
         return this.host.config.initialNodeHeight;
+      case "autoFitNodeHeight":
+        return this.host.config.autoFitNodeHeight;
+      case "hideNodeBorder":
+        return this.host.config.hideNodeBorder;
       case "nodeGap":
         return this.host.config.nodeGap;
       case "previewWidth":
@@ -6997,6 +7084,11 @@ var DragDropSettingTab = class extends import_obsidian10.PluginSettingTab {
         this.host.config.nodeGap = normalized;
         break;
       }
+      case "autoFitNodeHeight":
+      case "hideNodeBorder":
+        if (typeof value !== "boolean") return;
+        this.host.config[key] = value;
+        break;
       case "previewWidth": {
         const normalized = clampInteger(value, 200, 1e3);
         if (normalized === void 0) return;

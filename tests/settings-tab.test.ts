@@ -12,6 +12,19 @@ vi.mock("obsidian", () => ({
 type Group = { heading: string; items: { name: string; desc: string; control: { key: string } }[] };
 
 describe("settings page organization", () => {
+  it("reads and persists independent Canvas appearance toggles", async () => {
+    const host = { config: mergeSettings(undefined), saveSettings: vi.fn().mockResolvedValue(undefined) };
+    const tab = new DragDropSettingTab({} as App, host as Plugin & typeof host);
+    const canvasGroup = (tab.getSettingDefinitions() as Group[])[2];
+    expect(canvasGroup.items.map((item) => item.control.key)).toContain("autoFitNodeHeight");
+    expect(canvasGroup.items.map((item) => item.control.key)).toContain("hideNodeBorder");
+    await tab.setControlValue("autoFitNodeHeight", false);
+    await tab.setControlValue("hideNodeBorder", true);
+    expect(tab.getControlValue("autoFitNodeHeight")).toBe(false);
+    expect(tab.getControlValue("hideNodeBorder")).toBe(true);
+    expect(host.saveSettings).toHaveBeenCalledTimes(2);
+  });
+
   it("separates drop scopes, removes same-file alias links, and retains every scalar control once", async () => {
     const host = { config: mergeSettings(undefined), saveSettings: vi.fn().mockResolvedValue(undefined) };
     const tab = new DragDropSettingTab({} as App, host as Plugin & typeof host);

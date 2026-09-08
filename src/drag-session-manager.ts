@@ -167,6 +167,12 @@ interface CanvasPenContextMenuSuppression {
   expiresAt: number;
 }
 
+interface MarkdownPenContextMenuSuppression extends CanvasPenContextMenuSuppression {
+  pointerId: number;
+  x: number;
+  y: number;
+}
+
 interface MarkdownDropTarget {
   view: MarkdownView;
   editorView: EditorView;
@@ -249,6 +255,7 @@ export class DragSessionManager extends Component implements DragStarter {
   private readonly iosSuppressedTouches = new Map<number, Document>();
   private iosClickSuppression: { ownerDocument: Document; clientX: number; clientY: number; expiresAt: number } | null = null;
   private canvasPenContextMenuSuppression: CanvasPenContextMenuSuppression | null = null;
+  private markdownPenContextMenuSuppression: MarkdownPenContextMenuSuppression | null = null;
   private readonly syntheticCanvasEvents = new WeakSet<Event>();
   private ghostElement: HTMLElement | null = null;
   private ghostComponent: Component | null = null;
@@ -298,6 +305,7 @@ export class DragSessionManager extends Component implements DragStarter {
   onunload(): void {
     for (const document of this.documentComponents.keys()) this.cancelCanvasInputs(document);
     this.cleanupDrag();
+    this.markdownPenContextMenuSuppression = null;
     this.cancelSelectionPointer();
     this.blockSelections.clear();
     this.documentComponents.clear();
@@ -483,6 +491,7 @@ export class DragSessionManager extends Component implements DragStarter {
     }
     try {
       element.setPointerCapture(event.pointerId);
+      this.rememberMarkdownPenContextMenu(this.pointerDrag, event);
     } catch {
       this.clearMobileSelectionTimer(this.pointerDrag);
       this.pointerDrag = null;
@@ -492,6 +501,7 @@ export class DragSessionManager extends Component implements DragStarter {
   movePointerDrag(event: PointerEvent): void {
     const pointerDrag = this.pointerDrag;
     if (!pointerDrag || !matchesPointerDrag(pointerDrag.pointerId, event.pointerId)) return;
+    this.rememberMarkdownPenContextMenu(pointerDrag, event);
     event.preventDefault();
 
     if (pointerDrag.mobileSelectionMode) {
@@ -559,6 +569,7 @@ export class DragSessionManager extends Component implements DragStarter {
     }
     const pointerDrag = this.pointerDrag;
     if (!pointerDrag || !matchesPointerDrag(pointerDrag.pointerId, event.pointerId)) return;
+    this.rememberMarkdownPenContextMenu(pointerDrag, event);
     event.preventDefault();
 
     if (pointerDrag.mobileSelectionMode) {
@@ -1280,15 +1291,18 @@ export class DragSessionManager extends Component implements DragStarter {
   private cancelCanvasInputs(document: Document): void {
     if (this.canvasTouchNavigation?.target.ownerDocument === document) this.cancelTouchNavigation(false);
     if (this.canvasPenDrag?.dispatchTarget.ownerDocument === document || this.canvasPenNativePointer?.ownerDocument === document ||
-      (this.iosPencilEnabled && this.pointerDrag?.element.ownerDocument === document)) this.cleanupDrag();
+      ((this.iosPencilEnabled || this.pointerDrag?.pointerType === "pen") &&
+        this.pointerDrag?.element.ownerDocument === document)) this.cleanupDrag();
     for (const [id, doc] of this.iosBlockedPointers) if (doc === document) this.iosBlockedPointers.delete(id);
     for (const [id, doc] of this.iosSuppressedTouches) if (doc === document) this.iosSuppressedTouches.delete(id);
     if (this.iosClickSuppression?.ownerDocument === document) this.iosClickSuppression = null;
     if (this.canvasPenPassthroughPointer?.ownerDocument === document) this.canvasPenPassthroughPointer = null;
+    if (this.markdownPenContextMenuSuppression?.ownerDocument === document) this.markdownPenContextMenuSuppression = null;
   }
 
   private handleCanvasPenPointerDown(event: PointerEvent): void {
     if (this.syntheticCanvasEvents.has(event)) return;
+    this.markdownPenContextMenuSuppression = null;
     const iosMapping = this.iosPencilEnabled;
     const interactionType = iosMapping && event.pointerType === "touch"
       ? "pan" : canvasPenInteractionForEvent(event, iosMapping);
@@ -1517,6 +1531,7 @@ export class DragSessionManager extends Component implements DragStarter {
   }
 
   private handleCanvasPenContextMenu(event: MouseEvent): void {
+    if (this.suppressMarkdownPenContextMenu(event)) return;
     const dragDocument = this.canvasPenDrag?.dispatchTarget.ownerDocument ?? this.canvasPenNativePointer?.ownerDocument;
     const suppression = this.canvasPenContextMenuSuppression;
     const ownerDocument = dragDocument ?? suppression?.ownerDocument;
@@ -1533,6 +1548,46 @@ export class DragSessionManager extends Component implements DragStarter {
     event.preventDefault();
     event.stopImmediatePropagation();
     if (!dragDocument) this.canvasPenContextMenuSuppression = null;
+  }
+
+  private rememberMarkdownPenContextMenu(drag: PointerDrag, event: PointerEvent): void {
+    if (drag.pointerType !== "pen") return;
+    this.markdownPenContextMenuSuppression = {
+      ownerDocument: drag.element.ownerDocument,
+      pointerId: drag.pointerId,
+      x: event.clientX,
+      y: event.clientY,
+      expiresAt: Date.now() + 1_000,
+    };
+  }
+
+  private suppressMarkdownPenContextMenu(event: MouseEvent): boolean {
+    const drag = this.pointerDrag?.pointerType === "pen" ? this.pointerDrag : null;
+    const suppression = this.markdownPenContextMenuSuppression;
+    const ownerDocument = drag?.element.ownerDocument ?? suppression?.ownerDocument;
+    if (!ownerDocument || !this.isSameEventDocument(event, ownerDocument)) return false;
+    if (!drag && suppression && suppression.expiresAt < Date.now()) {
+      this.markdownPenContextMenuSuppression = null;
+      return false;
+    }
+    const pointerType = "pointerType" in event ? event.pointerType : undefined;
+    if (pointerType === "pen") {
+      const pointerId = drag?.pointerId ?? suppression?.pointerId;
+      // Windows can report contextmenu with pointerId 1 after a pen release
+      // that used a different ID. Correlate that event by time and position.
+      if ("pointerId" in event && event.pointerId !== pointerId &&
+        (!suppression || suppression.expiresAt < Date.now() ||
+          Math.hypot(event.clientX - suppression.x, event.clientY - suppression.y) > 24)) return false;
+    } else {
+      // Older Chromium versions emit MouseEvent for pen context menus.
+      if (pointerType || event.button !== 2) return false;
+      if (!drag && suppression && Math.hypot(event.clientX - suppression.x, event.clientY - suppression.y) > 24) return false;
+    }
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    // Retain the release guard across asynchronous commits and capture cleanup.
+    if (!drag) this.markdownPenContextMenuSuppression = null;
+    return true;
   }
 
   private beginCanvasPenDrag(event: PointerEvent, interaction: CanvasPenInteraction): boolean {
@@ -2508,6 +2563,10 @@ export class DragSessionManager extends Component implements DragStarter {
       this.host.config.nodeWidth,
       this.host.config.initialNodeHeight,
       this.host.config.nodeGap,
+      {
+        autoFitNodeHeight: this.host.config.autoFitNodeHeight,
+        hideNodeBorder: this.host.config.hideNodeBorder,
+      },
     );
   }
 
