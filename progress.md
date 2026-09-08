@@ -1,12 +1,14 @@
 # 进度日志
 
-## 0.1.11 发布准备（2026-09-09）
+## 0.1.11 发布完成（2026-09-09）
 
 - 用户实机确认 Surface Pen 菜单已修复；两个卡片外观开关此前已确认正常。
 - 已获 commit、push、release 授权，版本文件和发布说明更新至 0.1.11。package-lock.json 仍按原有忽略规则仅本地更新。
 - fetch 确认本地分支与 origin/codex/stage-8-dragger-integration 无分歧，远端最新正式版本为 0.1.10。
 - 0.1.11 版本更新后 lint 零错误/警告、typecheck、25 files / 243 tests、生产 build、node --check main.js 和 git diff --check 均通过。
 - 六个插件发布文件已更新到标准 plugins/dragdrop 与 plugins-dev/plugin，三方哈希一致；data.json 和 graph-worker.js 未变。
+- 已提交 8df3296 并推送 codex/stage-8-dragger-integration；远端 tag 0.1.11 的解引用提交与发布代码一致。
+- 已创建最新正式 Release：https://github.com/Rex-Diego/dragdrop/releases/tag/0.1.11，非 draft、非 prerelease；main.js、manifest.json、styles.css 均为 uploaded，SHA-256 digest 与本地一致。
 
 ## 会话：2026-09-09（Surface Pen 拖放右键菜单）
 

@@ -4,10 +4,10 @@
 实现名为 `dragdrop` 的 Obsidian 插件：删除 CardNote 的搜索、Excalidraw 和窗口管理功能，保留并重构 Markdown→Canvas 拖拽；阶段 6 实现 Markdown→Markdown 直通拖拽和 Canvas 归纳按钮，阶段 7 实现可编辑块嵌入，阶段 8 选择性融合 obsidian-dragger 的结构重排、多选、块菜单、跨文件目标、视觉和移动端交互。鼠标链路支持桌面端与弹出窗口，触控链路优先支持 Surface 并为 iPad 提供能力守卫下的实验兼容。
 
 ## 当前阶段
-当前发布任务（2026-09-09）：发布 0.1.11，包含卡片外观开关和 Surface Pen 菜单修复。
+已完成发布任务（2026-09-09）：发布 0.1.11，包含卡片外观开关和 Surface Pen 菜单修复。
 - [x] 用户确认全部本轮问题解决，并授权 commit、push、release。
-- [ ] 更新版本、生产验证、提交并推送分支与 tag。
-- [ ] 创建正式 Release 并验证三附件哈希。
+- [x] 更新版本、生产验证、提交 8df3296 并推送分支与 tag 0.1.11。
+- [x] 创建正式 Release 0.1.11，三个附件均 uploaded 且 SHA-256 与本地构建一致。
 
 当前插入任务（2026-09-09）：Surface Pen 从 Markdown 拖入 Canvas 后右键菜单残留。
 - [x] 定位 contextmenu 拦截仅覆盖 Canvas 内笔势、未覆盖 Markdown pointerDrag。

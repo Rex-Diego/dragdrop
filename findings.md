@@ -4,6 +4,7 @@
 
 - 用户已确认卡片外观开关和 Surface Pen 菜单修复正常，并授权 commit、push、release。
 - 发布版本从 0.1.10 升至 0.1.11，包含本轮全部源码、测试、文档和构建产物；沿用 codex/stage-8-dragger-integration 分支，正式 Release 附件为 main.js、manifest.json、styles.css。
+- 正式发布地址：https://github.com/Rex-Diego/dragdrop/releases/tag/0.1.11。远端 tag 指向 8df329603a07551c1942b6c0fa7c13e455d4e3b8；Release 非 draft、非 prerelease，三个附件的 GitHub SHA-256 digest 均与本地一致。
 
 ## Surface Pen Markdown → Canvas 菜单残留（2026-09-09）
 
