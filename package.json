@@ -1,6 +1,6 @@
 {
   "name": "obsidian-dragdrop",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "private": true,
   "description": "Minimal Markdown drag-and-drop workflows for Obsidian Canvas",
   "main": "main.js",

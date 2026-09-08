@@ -1,5 +1,30 @@
 # 进度日志
 
+## 0.1.8 发布准备
+
+- 用户授权先 commit、push、release 当前修复，再实施 iPad 手指/Pencil 映射。版本文件统一升至 0.1.8，发布说明与 Surface 侧键缩放规则一致。
+- 发布产物只含当前设置与 Surface 修复，iPad 新逻辑在发布后实施。
+
+## 会话：2026-09-08（8.11 侧键缩放与 iPad 调研）
+
+- 增加 resizer 专属判定；笔尖命中走 Canvas 平移，侧键命中走原生缩放；中英文说明同步。
+- 旧“笔移动经过控件”用例因新笔尖平移语义失败，改为侧键不凭空启动缩放；新增八方向笔尖与途中按侧键的回归。最终 25 files / 197 tests 通过。
+- lint 0 errors / 0 warnings、typecheck、生产 build、node --check main.js、git diff --check 通过。
+- 六个发布文件部署至标准 plugins/dragdrop 与 plugins-dev/plugin；逐项 SHA-256 一致。main.js：BA0C5DC569DC536994790DD624E70EB59E89AF47841DADD5962F7889E656EDCF。data.json 与 graph-worker.js 哈希保持不变。
+- AnySearch Python 缺 requests，改用已有 Node CLI；一次 TLS 失败重试成功。Apple 动态文档正文抽取为空，读取官方 DocC JSON 完成核对。iOS App Store 返回 1.13.7，移动端 1.13.8 是 Android 修复，1.14.0 为预览。
+- 调研记录见 ipad-pencil-research.md。未实现 iPad 新模式、未重载 Obsidian、未进行实体 Surface/iPad 验收。本轮未 commit/push/release。
+
+## 会话：2026-09-08（8.10 设置与 Surface Pen 控件）
+
+- 设置按同文件、跨文件、Canvas、外观、移动端与手写笔、Markdown 块操作、高级功能组织；每个动作有专属说明，跨文件移动明确删除来源及 ID 确认，别名与 Canvas 卡片配置各归所属作用域。
+- 删除同文件别名动作展示/写入入口，旧同文件配置 link-source 迁移为 embed-source；跨文件新语义不变。
+- 读取本机 Obsidian 核心确认缩放鼠标类型限制和连接点主键限制；适配完整 down/move/up/cancel，保持 Canvas 原生处理和普通鼠标路径。
+- 新增 manager 级 Canvas 事件测试：八方向缩放、笔尖/侧键连接、错误指针、取消、兼容鼠标抑制、输入控件旁路、开关关闭、移除控件、连接点优先和 SVG 空白排除；设置结构测试保证所有标量控件各出现一次。
+- 最终 lint 0 errors / 0 warnings、typecheck、25 files / 189 tests、生产 build、node --check main.js、git diff --check 通过。
+- 中途测试替身出现 unbound-method lint 错误及 EventTarget 类型比较错误，已修复；规划补丁两次上下文未匹配，改为精确文件标题插入。旧中文规划技能路径不存在，使用已安装中文入口及 planning-with-files 回退。
+- 本轮没有原生 Windows UI 控制入口，未重载 Obsidian，Surface 实机验收保留未完成；0.1.7 是上一轮已发布版本，本轮改动暂留工作树。
+- 最终六文件部署到标准 plugins/dragdrop 和 plugins-dev/plugin，两处均与源码产物 SHA-256 一致；已有 data.json、graph-worker.js 哈希未变。main.js SHA-256：68AA77B603C938424D58E68866E1F4A9462E4597905B0DB6FF5EDA5DF5BCAFB7。
+
 ## 会话：2026-07-15
 
 ### 阶段 1：需求与发现

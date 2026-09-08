@@ -5,7 +5,7 @@ describe("settings localization", () => {
   it.each(["zh", "zh-CN", "zh-TW"])('uses Chinese text for "%s"', (language) => {
     const text = settingsTextForLanguage(language);
 
-    expect(text.headingCoreBehavior).toBe("核心行为");
+    expect(text.headingMarkdown).toBe("Markdown 块操作");
     expect(text.cancelDropAction).toBe("取消本次拖放");
     expect(text.selectionMenuTimeoutName).toBe("文字选区菜单自动消失秒数");
     expect(text.selectionMenuTimeoutDescription).toContain("-1");
@@ -13,6 +13,9 @@ describe("settings localization", () => {
     expect(text.blockMenuDescription).not.toContain("转换");
     expect(text.crossMarkdownEmbedAliasDescription).toContain("[[");
     expect(text.crossMarkdownEmbedAliasDescription).not.toContain("![[");
+    expect(text.markdownEmbedActionDescription).toContain("![[");
+    expect(text.markdownEmbedActionDescription).not.toContain("[[...|alias]]");
+    expect(text.markdownMoveActionDescription).toContain("移动");
   });
 
   it("falls back to clear English labels", () => {
@@ -25,5 +28,7 @@ describe("settings localization", () => {
     expect(text.blockMenuDescription).not.toContain("Convert");
     expect(text.crossMarkdownEmbedAliasDescription).toContain("[[");
     expect(text.crossMarkdownEmbedAliasDescription).not.toContain("![[");
+    expect(text.markdownEmbedActionDescription).toContain("![[");
+    expect(text.markdownMoveActionDescription).toContain("Moves");
   });
 });

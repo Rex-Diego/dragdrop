@@ -32,6 +32,10 @@ const CANVAS_NATIVE_CONTROL_SELECTOR =
   ".canvas-edge, .canvas-interaction-path, .canvas-display-path, .canvas-path-label, " +
   ".canvas-path-label-wrapper, button, input, textarea, select";
 
+export const CANVAS_PEN_DRAG_CONTROL_SELECTOR =
+  ".canvas-node-connection-point, .canvas-node-resizer, .canvas-edge, " +
+  ".canvas-interaction-path, .canvas-display-path, .canvas-path-label, .canvas-path-label-wrapper";
+
 /** Canvas owns these controls, including the thin card resize handles. */
 export function isCanvasNativeControlElement(
   element: Pick<Element, "closest">,
@@ -39,14 +43,46 @@ export function isCanvasNativeControlElement(
   return element.closest(CANVAS_NATIVE_CONTROL_SELECTOR) !== null;
 }
 
+/** Resize handles are reserved for the Surface Pen side-button gesture. */
+export function isCanvasResizeHandleElement(
+  element: Pick<Element, "closest">,
+): boolean {
+  if (element.closest(".canvas-node-connection-point") !== null) return false;
+  return element.closest(".canvas-node-resizer") !== null;
+}
+
 /**
  * Used for coordinate hit testing when Chromium reports the card below a
  * resize handle as the pointer target.
  */
-export const CANVAS_NATIVE_HIT_SELECTOR =
-  ".canvas-node-resizer, .canvas-node-connection-point, .canvas-edge, " +
-  ".canvas-interaction-path, .canvas-display-path, .canvas-path-label, " +
-  ".canvas-path-label-wrapper";
+export function findCanvasPenDragControl(
+  container: Element,
+  target: Element,
+  clientX: number,
+  clientY: number,
+): Element | null {
+  // Hit-test the current coordinates even when pen capture reports the card.
+  const hits = container.ownerDocument.elementsFromPoint(clientX, clientY);
+  for (const hit of hits) {
+    if (!container.contains(hit)) continue;
+    const control = hit.closest(CANVAS_PEN_DRAG_CONTROL_SELECTOR);
+    if (control && container.contains(control)) return control;
+    if (isCanvasNativeControlElement(hit)) return null;
+  }
+  const direct = target.closest(CANVAS_PEN_DRAG_CONTROL_SELECTOR);
+  if (direct && container.contains(direct)) return direct;
+
+  // Connection points sit inside resizers, so try them first. Never use an
+  // SVG edge's bounding box: most of its rectangle is empty canvas.
+  for (const selector of [".canvas-node-connection-point", ".canvas-node-resizer"]) {
+    for (const candidate of Array.from(container.querySelectorAll(selector))) {
+      const style = container.ownerDocument.defaultView?.getComputedStyle(candidate);
+      if (!style || style.display === "none" || style.visibility === "hidden" || style.pointerEvents === "none") continue;
+      if (isPointInsidePointerRect(candidate.getBoundingClientRect(), clientX, clientY)) return candidate;
+    }
+  }
+  return null;
+}
 
 export type CanvasPenInteraction = "select" | "pan";
 

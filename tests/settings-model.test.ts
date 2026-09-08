@@ -72,6 +72,17 @@ describe("action-oriented modifier settings", () => {
     expect(reloaded.sameMarkdownBindings).toEqual(settings.sameMarkdownBindings);
   });
 
+  it("removes alias-link actions from same-file bindings while preserving cross-file links", () => {
+    const merged = mergeSettings({
+      schemaVersion: SETTINGS_SCHEMA_VERSION,
+      markdownBindings: { ...DEFAULT_SETTINGS.markdownBindings, shift: "link-source" },
+      sameMarkdownBindings: { ...DEFAULT_SETTINGS.sameMarkdownBindings, shift: "link-source" },
+    });
+
+    expect(merged.markdownBindings.shift).toBe("link-source");
+    expect(merged.sameMarkdownBindings.shift).toBe("embed-source");
+  });
+
   it("does not reset explicit same-file bindings when old cross-file defaults migrate", () => {
     const merged = mergeSettings({
       schemaVersion: 3,

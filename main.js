@@ -2055,10 +2055,33 @@ function isSurfacePenSideButton(event) {
   return event.pointerType === "pen" && (event.buttons & 2) !== 0;
 }
 var CANVAS_NATIVE_CONTROL_SELECTOR = ".canvas-menu, .canvas-card-menu, .canvas-node-resizer, .canvas-node-connection-point, .canvas-edge, .canvas-interaction-path, .canvas-display-path, .canvas-path-label, .canvas-path-label-wrapper, button, input, textarea, select";
+var CANVAS_PEN_DRAG_CONTROL_SELECTOR = ".canvas-node-connection-point, .canvas-node-resizer, .canvas-edge, .canvas-interaction-path, .canvas-display-path, .canvas-path-label, .canvas-path-label-wrapper";
 function isCanvasNativeControlElement(element) {
   return element.closest(CANVAS_NATIVE_CONTROL_SELECTOR) !== null;
 }
-var CANVAS_NATIVE_HIT_SELECTOR = ".canvas-node-resizer, .canvas-node-connection-point, .canvas-edge, .canvas-interaction-path, .canvas-display-path, .canvas-path-label, .canvas-path-label-wrapper";
+function isCanvasResizeHandleElement(element) {
+  if (element.closest(".canvas-node-connection-point") !== null) return false;
+  return element.closest(".canvas-node-resizer") !== null;
+}
+function findCanvasPenDragControl(container, target, clientX, clientY) {
+  const hits = container.ownerDocument.elementsFromPoint(clientX, clientY);
+  for (const hit of hits) {
+    if (!container.contains(hit)) continue;
+    const control = hit.closest(CANVAS_PEN_DRAG_CONTROL_SELECTOR);
+    if (control && container.contains(control)) return control;
+    if (isCanvasNativeControlElement(hit)) return null;
+  }
+  const direct = target.closest(CANVAS_PEN_DRAG_CONTROL_SELECTOR);
+  if (direct && container.contains(direct)) return direct;
+  for (const selector of [".canvas-node-connection-point", ".canvas-node-resizer"]) {
+    for (const candidate of Array.from(container.querySelectorAll(selector))) {
+      const style = container.ownerDocument.defaultView?.getComputedStyle(candidate);
+      if (!style || style.display === "none" || style.visibility === "hidden" || style.pointerEvents === "none") continue;
+      if (isPointInsidePointerRect(candidate.getBoundingClientRect(), clientX, clientY)) return candidate;
+    }
+  }
+  return null;
+}
 function canvasPenButtonForInteraction(interaction) {
   return interaction === "pan" ? 1 : 0;
 }
@@ -2141,6 +2164,7 @@ var DragSessionManager = class extends import_obsidian6.Component {
   selectionPointer = null;
   canvasPenDrag = null;
   canvasPenNativePointer = null;
+  canvasPenPassthroughPointer = null;
   canvasPenContextMenuSuppression = null;
   syntheticCanvasEvents = /* @__PURE__ */ new WeakSet();
   ghostElement = null;
@@ -2875,13 +2899,14 @@ var DragSessionManager = class extends import_obsidian6.Component {
       if (event.key !== "Escape") return;
       this.clearBlockSelectionsInDocument(document);
       this.cancelSelectionPointer();
-      if (this.session || this.pointerDrag || this.canvasPenDrag) {
+      if (this.session || this.pointerDrag || this.canvasPenDrag || this.canvasPenNativePointer) {
         this.cleanupDrag();
       }
     }, true);
     this.documentComponents.set(document, component);
   }
   unregisterDocument(document) {
+    if (this.canvasPenNativePointer?.ownerDocument === document) this.cleanupDrag();
     this.clearBlockSelectionsInDocument(document);
     if (this.selectionPointer?.view.dom.ownerDocument === document) {
       this.cancelSelectionPointer();
@@ -2895,8 +2920,8 @@ var DragSessionManager = class extends import_obsidian6.Component {
   handleCanvasPenPointerDown(event) {
     if (this.syntheticCanvasEvents.has(event)) return;
     const interactionType = canvasPenInteractionForEvent(event);
-    if (!interactionType || interactionType === "select" && !this.host.config.surfacePenSideButtonDrag) return;
-    if (this.canvasPenDrag || this.pointerDrag) return;
+    if (!interactionType) return;
+    if (this.canvasPenDrag || this.canvasPenNativePointer || this.pointerDrag) return;
     const target = this.elementFromEventTarget(event.target);
     if (!target) return;
     const interaction = this.findCanvasPenInteraction(
@@ -2905,20 +2930,39 @@ var DragSessionManager = class extends import_obsidian6.Component {
       event.clientX,
       event.clientY
     );
-    if (interaction === "native") {
-      this.canvasPenNativePointer = {
-        pointerId: event.pointerId,
-        ownerDocument: target.ownerDocument
-      };
+    if (interaction === "passthrough") {
+      this.canvasPenPassthroughPointer = { pointerId: event.pointerId, ownerDocument: target.ownerDocument };
       return;
     }
+    if (interaction?.native) {
+      this.canvasPenNativePointer = {
+        pointerId: event.pointerId,
+        ownerDocument: target.ownerDocument,
+        dispatchTarget: interaction.dispatchTarget,
+        lastEvent: event
+      };
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      this.dispatchCanvasPointerEvent("pointerdown", event, interaction.dispatchTarget, 1, 0);
+      return;
+    }
+    if (interactionType === "select" && !this.host.config.surfacePenSideButtonDrag) return;
     if (!interaction || !this.beginCanvasPenDrag(event, interaction)) return;
     event.preventDefault();
     event.stopImmediatePropagation();
   }
   handleCanvasPenPointerMove(event) {
     if (this.syntheticCanvasEvents.has(event)) return;
-    if (this.isCanvasPenNativePointer(event)) return;
+    if (this.isCanvasPenPassthroughPointer(event)) return;
+    const nativePointer = this.canvasPenNativePointer;
+    if (nativePointer && this.isCanvasPenNativePointer(event)) {
+      nativePointer.lastEvent = event;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      this.dispatchCanvasPointerEvent("pointermove", event, nativePointer.dispatchTarget, 1, -1);
+      return;
+    }
+    if (nativePointer) return;
     if (!this.canvasPenDrag) {
       const interactionType = canvasPenInteractionForEvent(event);
       if (!interactionType || interactionType === "select" && !this.host.config.surfacePenSideButtonDrag) return;
@@ -2931,13 +2975,7 @@ var DragSessionManager = class extends import_obsidian6.Component {
         event.clientX,
         event.clientY
       );
-      if (interaction === "native") {
-        this.canvasPenNativePointer = {
-          pointerId: event.pointerId,
-          ownerDocument: target.ownerDocument
-        };
-        return;
-      }
+      if (interaction === "passthrough" || interaction?.native) return;
       if (!interaction || !this.beginCanvasPenDrag(event, interaction)) return;
     }
     const drag = this.canvasPenDrag;
@@ -2954,7 +2992,18 @@ var DragSessionManager = class extends import_obsidian6.Component {
   }
   handleCanvasPenPointerUp(event) {
     if (this.syntheticCanvasEvents.has(event)) return;
-    if (this.isCanvasPenNativePointer(event)) {
+    if (this.isCanvasPenPassthroughPointer(event)) {
+      this.canvasPenPassthroughPointer = null;
+      return;
+    }
+    const nativePointer = this.canvasPenNativePointer;
+    if (nativePointer && this.isCanvasPenNativePointer(event)) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      this.dispatchCanvasPointerEvent("pointerup", event, nativePointer.dispatchTarget, 0, 0);
+      if (isSurfacePenSideButton(nativePointer.lastEvent)) {
+        this.canvasPenContextMenuSuppression = { ownerDocument: nativePointer.ownerDocument, expiresAt: Date.now() + 1e3 };
+      }
       this.canvasPenNativePointer = null;
       return;
     }
@@ -2973,7 +3022,15 @@ var DragSessionManager = class extends import_obsidian6.Component {
   }
   handleCanvasPenPointerCancel(event) {
     if (this.syntheticCanvasEvents.has(event)) return;
-    if (this.isCanvasPenNativePointer(event)) {
+    if (this.isCanvasPenPassthroughPointer(event)) {
+      this.canvasPenPassthroughPointer = null;
+      return;
+    }
+    const nativePointer = this.canvasPenNativePointer;
+    if (nativePointer && this.isCanvasPenNativePointer(event)) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      this.dispatchCanvasPointerEvent("pointercancel", event, nativePointer.dispatchTarget, 0, 0);
       this.canvasPenNativePointer = null;
       return;
     }
@@ -2986,6 +3043,7 @@ var DragSessionManager = class extends import_obsidian6.Component {
   }
   handleCanvasPenMouseDown(event) {
     if (this.syntheticCanvasEvents.has(event)) return;
+    if (this.suppressCanvasPenNativeMouse(event)) return;
     const drag = this.canvasPenDrag;
     if (!drag || !this.isSameEventDocument(event, drag.dispatchTarget.ownerDocument)) {
       return;
@@ -2995,6 +3053,7 @@ var DragSessionManager = class extends import_obsidian6.Component {
   }
   handleCanvasPenMouseMove(event) {
     if (this.syntheticCanvasEvents.has(event)) return;
+    if (this.suppressCanvasPenNativeMouse(event)) return;
     const drag = this.canvasPenDrag;
     if (!drag || !this.isSameEventDocument(event, drag.dispatchTarget.ownerDocument)) return;
     event.preventDefault();
@@ -3002,13 +3061,14 @@ var DragSessionManager = class extends import_obsidian6.Component {
   }
   handleCanvasPenMouseUp(event) {
     if (this.syntheticCanvasEvents.has(event)) return;
+    if (this.suppressCanvasPenNativeMouse(event)) return;
     const drag = this.canvasPenDrag;
     if (!drag || !this.isSameEventDocument(event, drag.dispatchTarget.ownerDocument)) return;
     event.preventDefault();
     event.stopImmediatePropagation();
   }
   handleCanvasPenContextMenu(event) {
-    const dragDocument = this.canvasPenDrag?.dispatchTarget.ownerDocument;
+    const dragDocument = this.canvasPenDrag?.dispatchTarget.ownerDocument ?? this.canvasPenNativePointer?.ownerDocument;
     const suppression = this.canvasPenContextMenuSuppression;
     const ownerDocument = dragDocument ?? suppression?.ownerDocument;
     if (!ownerDocument || !this.isSameEventDocument(event, ownerDocument) || suppression && suppression.expiresAt < Date.now()) {
@@ -3051,13 +3111,14 @@ var DragSessionManager = class extends import_obsidian6.Component {
   dispatchCanvasPointerEvent(type, source, target, buttons, button) {
     const ownerWindow2 = target.ownerDocument.defaultView;
     if (!ownerWindow2) return;
+    const dispatchTarget = target.isConnected ? target : target.ownerDocument;
     if (typeof ownerWindow2.PointerEvent === "function") {
       const synthetic = new ownerWindow2.PointerEvent(
         type,
         createCanvasPointerEventInit(source, ownerWindow2, button, buttons)
       );
       this.syntheticCanvasEvents.add(synthetic);
-      target.dispatchEvent(synthetic);
+      dispatchTarget.dispatchEvent(synthetic);
     }
     const mouseType = type === "pointerdown" ? "mousedown" : type === "pointermove" ? "mousemove" : type === "pointerup" ? "mouseup" : null;
     if (!mouseType) return;
@@ -3066,7 +3127,7 @@ var DragSessionManager = class extends import_obsidian6.Component {
       bubbles: true,
       cancelable: true,
       composed: true,
-      button,
+      button: type === "pointermove" ? 0 : button,
       buttons,
       clientX: source.clientX,
       clientY: source.clientY,
@@ -3078,7 +3139,7 @@ var DragSessionManager = class extends import_obsidian6.Component {
       metaKey: source.metaKey
     });
     this.syntheticCanvasEvents.add(syntheticMouse);
-    target.dispatchEvent(syntheticMouse);
+    dispatchTarget.dispatchEvent(syntheticMouse);
   }
   isSameEventDocument(event, ownerDocument) {
     const target = isNodeLike2(event.target) ? event.target : null;
@@ -3106,8 +3167,22 @@ var DragSessionManager = class extends import_obsidian6.Component {
       if (result || !isCanvasView(leaf.view)) return;
       const view = leaf.view;
       if (view.containerEl.ownerDocument === element.ownerDocument && view.containerEl.isConnected && view.containerEl.contains(element)) {
-        if (this.isCanvasControl(element) || this.isCanvasNativeTargetAtPoint(view, clientX, clientY)) {
-          result = "native";
+        const nativeTarget = findCanvasPenDragControl(view.containerEl, element, clientX, clientY);
+        if (nativeTarget) {
+          if (isCanvasResizeHandleElement(nativeTarget) && interactionType !== "select") {
+            const wrapper2 = this.findCanvasWrapper(view);
+            if (!wrapper2?.contains(element)) return;
+            result = {
+              dispatchTarget: wrapper2,
+              button: canvasPenButtonForInteraction(interactionType)
+            };
+            return;
+          }
+          result = { dispatchTarget: nativeTarget, button: 0, native: true };
+          return;
+        }
+        if (this.isCanvasControl(element)) {
+          result = "passthrough";
           return;
         }
         const wrapper = this.findCanvasWrapper(view);
@@ -3152,17 +3227,16 @@ var DragSessionManager = class extends import_obsidian6.Component {
     const nativePointer = this.canvasPenNativePointer;
     return nativePointer !== null && nativePointer.pointerId === event.pointerId && this.isSameEventDocument(event, nativePointer.ownerDocument);
   }
-  isCanvasNativeTargetAtPoint(view, clientX, clientY) {
-    const candidates = Array.from(
-      view.containerEl.querySelectorAll(CANVAS_NATIVE_HIT_SELECTOR)
-    );
-    for (const candidate of candidates) {
-      const rect = candidate.getBoundingClientRect();
-      if (isPointInsidePointerRect(rect, clientX, clientY)) {
-        return true;
-      }
-    }
-    return false;
+  isCanvasPenPassthroughPointer(event) {
+    const pointer = this.canvasPenPassthroughPointer;
+    return pointer !== null && pointer.pointerId === event.pointerId && this.isSameEventDocument(event, pointer.ownerDocument);
+  }
+  suppressCanvasPenNativeMouse(event) {
+    const pointer = this.canvasPenNativePointer;
+    if (!pointer || !this.isSameEventDocument(event, pointer.ownerDocument)) return false;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    return true;
   }
   findPointerCaptureElement(element) {
     let current = element;
@@ -3851,7 +3925,12 @@ var DragSessionManager = class extends import_obsidian6.Component {
     this.session = null;
     this.commitGate.reset();
     this.clearCanvasPenDrag();
+    const nativePointer = this.canvasPenNativePointer;
+    if (nativePointer) {
+      this.dispatchCanvasPointerEvent("pointercancel", nativePointer.lastEvent, nativePointer.dispatchTarget, 0, 0);
+    }
     this.canvasPenNativePointer = null;
+    this.canvasPenPassthroughPointer = null;
     this.canvasPenContextMenuSuppression = null;
     if (this.pointerDrag) {
       this.clearMobileSelectionTimer(this.pointerDrag);
@@ -5768,13 +5847,13 @@ function migrateSettings(loaded) {
     schemaVersion: SETTINGS_SCHEMA_VERSION
   };
 }
-function mergeMarkdownBindings(loaded, legacyLinks) {
+function mergeMarkdownBindings(loaded, legacyLinks, allowAliasLinks = true) {
   const bindings = {
     ...DEFAULT_SETTINGS.markdownBindings,
     ...loaded
   };
   for (const chord of Object.keys(bindings)) {
-    if (legacyLinks && bindings[chord] === "link-source") {
+    if ((!allowAliasLinks || legacyLinks) && bindings[chord] === "link-source") {
       bindings[chord] = "embed-source";
     }
   }
@@ -5788,7 +5867,8 @@ function mergeSettings(loaded) {
   const markdownBindings = mergeMarkdownBindings(loadedMarkdownBindings, legacyLinks);
   const sameMarkdownBindings = mergeMarkdownBindings(
     loadedSameMarkdownBindings ?? loadedMarkdownBindings,
-    legacyLinks
+    legacyLinks,
+    false
   );
   const hasLegacyDefaults = legacyLinks && loadedMarkdownBindings?.none === "move" && loadedMarkdownBindings.primary === "link-source" && loadedMarkdownBindings["primary+shift"] === "embed-source";
   if (hasLegacyDefaults) {
@@ -5865,8 +5945,7 @@ function mergeSettings(loaded) {
 
 // src/settings-i18n.ts
 var EN_SETTINGS_TEXT = {
-  headingCoreBehavior: "Core behavior",
-  headingSelection: "Selection",
+  headingMarkdown: "Markdown blocks",
   headingAppearance: "Appearance",
   headingMobilePen: "Mobile and pen",
   headingAdvanced: "Advanced",
@@ -5888,9 +5967,13 @@ var EN_SETTINGS_TEXT = {
   markdownLinkAction: "Insert an alias link ([[file#^block-id|alias]])",
   markdownMoveAction: "Move the block here",
   cancelDropAction: "Cancel this drop",
-  canvasActionDescription: "Choose the modifier that performs this Canvas action. A modifier can be assigned to only one action in this group.",
-  sameMarkdownActionDescription: "Choose a modifier for this action inside the same file. Embed shows the block with ![[...]]; link inserts [[...|alias]]; move relocates the block.",
-  crossMarkdownActionDescription: "Choose a modifier for this action in another file. Embed shows the block with ![[...]]; link inserts [[...|alias]]; move removes the original after inserting it here.",
+  canvasLinkActionDescription: "Create a Canvas card referencing the original block. The source stays in its note.",
+  canvasCreateActionDescription: "Create a note containing an embed of the source block, then add that note to Canvas.",
+  crossMarkdownMoveDescription: "Insert the original block into the target file and remove it from the source. Existing block IDs require confirmation because references may break.",
+  markdownEmbedActionDescription: "Show the source block with ![[file#^block-id]]. The source stays in place; a missing block ID is added automatically.",
+  markdownLinkActionDescription: "Insert [[file#^block-id|alias]] using the link text below. The source stays in place; a missing block ID is added automatically.",
+  markdownMoveActionDescription: "Moves the original block to the drop location, preserving its block ID and existing references within this file.",
+  markdownCancelActionDescription: "Cancel the drop without changing any file.",
   folderStrategyName: "Created note location",
   folderStrategyDescription: "Choose where notes created by dragging to Canvas are stored.",
   folderFixed: "Use a fixed folder",
@@ -5932,9 +6015,9 @@ var EN_SETTINGS_TEXT = {
   canvasSummaryButtonName: "Canvas atomic note button",
   canvasSummaryButtonDescription: "Show the floating Canvas toolbar button that turns the current selection into one note. The command remains available when this is off.",
   touchDropActionName: "Touch drop action",
-  touchDropActionDescription: "Action used for finger or pen drops when no keyboard modifier is available.",
+  touchDropActionDescription: "Default action for finger or pen drops onto Canvas. A keyboard modifier uses the Canvas bindings above.",
   surfacePenName: "Surface Pen side-button drag",
-  surfacePenDescription: "Use the Surface Pen side button to drag Markdown handles and select on Canvas. Markdown drops use the saved modifier bindings, including No modifier when no keyboard key is pressed. Without the side button, the pen pans Canvas regardless of this setting.",
+  surfacePenDescription: "Use the side button to drag Markdown handles with your saved bindings or select on Canvas. The pen tip pans Canvas, including resize handles; hold the side button to resize a card. Connection points retain their drag action.",
   largerTouchHandlesName: "Larger touch handles",
   largerTouchHandlesDescription: "Use 44 x 44 touch targets for Markdown handles on touch-oriented devices.",
   mobileInteractionsName: "Mobile block selection",
@@ -5963,8 +6046,7 @@ var EN_SETTINGS_TEXT = {
   reloadEditableEmbedsNotice: "Reload Obsidian to apply Edit embedded blocks."
 };
 var ZH_SETTINGS_TEXT = {
-  headingCoreBehavior: "\u6838\u5FC3\u884C\u4E3A",
-  headingSelection: "\u5757\u9009\u62E9",
+  headingMarkdown: "Markdown \u5757\u64CD\u4F5C",
   headingAppearance: "\u5916\u89C2",
   headingMobilePen: "\u79FB\u52A8\u7AEF\u4E0E\u624B\u5199\u7B14",
   headingAdvanced: "\u9AD8\u7EA7\u529F\u80FD",
@@ -5986,9 +6068,13 @@ var ZH_SETTINGS_TEXT = {
   markdownLinkAction: "\u63D2\u5165\u522B\u540D\u53CC\u94FE\uFF08[[\u6587\u4EF6#^\u5757ID|\u522B\u540D]]\uFF09",
   markdownMoveAction: "\u628A\u539F\u5757\u79FB\u52A8\u5230\u8FD9\u91CC",
   cancelDropAction: "\u53D6\u6D88\u672C\u6B21\u62D6\u653E",
-  canvasActionDescription: "\u9009\u62E9\u6267\u884C\u6B64 Canvas \u52A8\u4F5C\u65F6\u4F7F\u7528\u7684\u4FEE\u9970\u952E\u3002\u540C\u4E00\u7EC4\u5185\uFF0C\u4E00\u4E2A\u4FEE\u9970\u952E\u53EA\u80FD\u5206\u914D\u7ED9\u4E00\u4E2A\u52A8\u4F5C\u3002",
-  sameMarkdownActionDescription: "\u9009\u62E9\u5728\u540C\u4E00\u4E2A\u6587\u4EF6\u5185\u6267\u884C\u6B64\u52A8\u4F5C\u7684\u4FEE\u9970\u952E\u3002\u5D4C\u5165\u7528 ![[...]] \u663E\u793A\u539F\u5757\u5185\u5BB9\uFF1B\u53CC\u94FE\u7528 [[...|\u522B\u540D]] \u663E\u793A\u94FE\u63A5\u6587\u5B57\uFF1B\u79FB\u52A8\u4F1A\u628A\u539F\u5757\u79FB\u5230\u76EE\u6807\u4F4D\u7F6E\u3002",
-  crossMarkdownActionDescription: "\u9009\u62E9\u62D6\u5230\u53E6\u4E00\u4E2A\u6587\u4EF6\u65F6\u6267\u884C\u6B64\u52A8\u4F5C\u7684\u4FEE\u9970\u952E\u3002\u5D4C\u5165\u7528 ![[...]] \u663E\u793A\u539F\u5757\u5185\u5BB9\uFF1B\u53CC\u94FE\u7528 [[...|\u522B\u540D]] \u663E\u793A\u94FE\u63A5\u6587\u5B57\uFF1B\u79FB\u52A8\u4F1A\u5728\u76EE\u6807\u63D2\u5165\u5185\u5BB9\u540E\u5220\u9664\u539F\u5757\u3002",
+  canvasLinkActionDescription: "\u521B\u5EFA\u5F15\u7528\u539F\u5757\u7684 Canvas \u5361\u7247\uFF0C\u539F\u5757\u4ECD\u4FDD\u7559\u5728\u6E90\u7B14\u8BB0\u4E2D\u3002",
+  canvasCreateActionDescription: "\u521B\u5EFA\u5305\u542B\u539F\u5757\u5D4C\u5165\u7684\u65B0\u7B14\u8BB0\uFF0C\u5E76\u5728 Canvas \u4E2D\u6DFB\u52A0\u8BE5\u7B14\u8BB0\u7684\u5361\u7247\u3002",
+  crossMarkdownMoveDescription: "\u628A\u539F\u5757\u63D2\u5165\u76EE\u6807\u6587\u4EF6\u540E\uFF0C\u4ECE\u6E90\u6587\u4EF6\u5220\u9664\u3002\u539F\u5757\u5DF2\u6709\u5757 ID \u65F6\u4F1A\u5148\u786E\u8BA4\uFF0C\u56E0\u4E3A\u73B0\u6709\u5F15\u7528\u53EF\u80FD\u5931\u6548\u3002",
+  markdownEmbedActionDescription: "\u4EE5 ![[\u6587\u4EF6#^\u5757ID]] \u663E\u793A\u539F\u5757\u5185\u5BB9\uFF0C\u539F\u5757\u4FDD\u7559\u5728\u539F\u4F4D\u7F6E\uFF1B\u7F3A\u5C11\u5757 ID \u65F6\u81EA\u52A8\u8865\u5145\u3002",
+  markdownLinkActionDescription: "\u63D2\u5165 [[\u6587\u4EF6#^\u5757ID|\u522B\u540D]]\uFF0C\u94FE\u63A5\u6587\u5B57\u4F7F\u7528\u4E0B\u65B9\u7684\u522B\u540D\u3002\u539F\u5757\u4FDD\u7559\u5728\u539F\u4F4D\u7F6E\uFF1B\u7F3A\u5C11\u5757 ID \u65F6\u81EA\u52A8\u8865\u5145\u3002",
+  markdownMoveActionDescription: "\u628A\u539F\u5757\u79FB\u52A8\u5230\u843D\u70B9\u4F4D\u7F6E\uFF0C\u4FDD\u7559\u5757 ID \u53CA\u540C\u6587\u4EF6\u5185\u7684\u73B0\u6709\u5F15\u7528\u3002",
+  markdownCancelActionDescription: "\u53D6\u6D88\u672C\u6B21\u62D6\u653E\uFF0C\u4E0D\u4FEE\u6539\u4EFB\u4F55\u6587\u4EF6\u3002",
   folderStrategyName: "\u65B0\u7B14\u8BB0\u4FDD\u5B58\u4F4D\u7F6E",
   folderStrategyDescription: "\u9009\u62E9\u62D6\u653E\u5230 Canvas \u65F6\u6240\u521B\u5EFA\u7B14\u8BB0\u7684\u4FDD\u5B58\u4F4D\u7F6E\u3002",
   folderFixed: "\u4F7F\u7528\u56FA\u5B9A\u6587\u4EF6\u5939",
@@ -6030,9 +6116,9 @@ var ZH_SETTINGS_TEXT = {
   canvasSummaryButtonName: "Canvas \u539F\u5B50\u7B14\u8BB0\u6309\u94AE",
   canvasSummaryButtonDescription: "\u5728 Canvas \u6D6E\u52A8\u5DE5\u5177\u680F\u4E2D\u663E\u793A\u628A\u5F53\u524D\u9009\u62E9\u6574\u7406\u4E3A\u4E00\u7BC7\u7B14\u8BB0\u7684\u6309\u94AE\u3002\u5173\u95ED\u540E\u4ECD\u53EF\u4F7F\u7528\u547D\u4EE4\u9762\u677F\u4E2D\u7684\u547D\u4EE4\u3002",
   touchDropActionName: "\u89E6\u63A7\u62D6\u653E\u52A8\u4F5C",
-  touchDropActionDescription: "\u624B\u6307\u6216\u624B\u5199\u7B14\u65E0\u6CD5\u4F7F\u7528\u952E\u76D8\u4FEE\u9970\u952E\u65F6\u6267\u884C\u7684\u52A8\u4F5C\u3002",
+  touchDropActionDescription: "\u624B\u6307\u6216\u624B\u5199\u7B14\u62D6\u653E\u5230 Canvas \u65F6\u7684\u9ED8\u8BA4\u52A8\u4F5C\uFF1B\u6309\u4E0B\u952E\u76D8\u4FEE\u9970\u952E\u65F6\u4F7F\u7528\u4E0A\u65B9\u7684 Canvas \u52A8\u4F5C\u7ED1\u5B9A\u3002",
   surfacePenName: "Surface Pen \u4FA7\u952E\u62D6\u62FD",
-  surfacePenDescription: "\u5728 Markdown \u6293\u624B\u4E0A\u6309\u4F4F Surface Pen \u4FA7\u952E\u65F6\u62D6\u62FD\uFF0C\u6309\u4F60\u8BBE\u7F6E\u7684\u4FEE\u9970\u952E\u6267\u884C\u52A8\u4F5C\uFF1B\u672A\u6309\u952E\u76D8\u6309\u952E\u65F6\u4F7F\u7528\u201C\u65E0\u4FEE\u9970\u952E\u201D\u8BBE\u7F6E\u3002\u5728 Canvas \u4E0A\u6309\u4F4F\u4FA7\u952E\u65F6\u9009\u4E2D\uFF0C\u672A\u6309\u4FA7\u952E\u65F6\u7B14\u5C16\u59CB\u7EC8\u5E73\u79FB\u753B\u5E03\u3002",
+  surfacePenDescription: "\u6309\u4F4F\u4FA7\u952E\u53EF\u62D6\u52A8 Markdown \u6293\u624B\uFF0C\u5E76\u4F7F\u7528\u5DF2\u8BBE\u7F6E\u7684\u4FEE\u9970\u952E\u7ED1\u5B9A\uFF1B\u5728 Canvas \u4E0A\u7528\u4E8E\u9009\u62E9\u3002\u7B14\u5C16\u62D6\u52A8\u753B\u5E03\u65F6\uFF0C\u5373\u4F7F\u547D\u4E2D\u7F29\u653E\u624B\u67C4\u4E5F\u4F1A\u5E73\u79FB\uFF1B\u6309\u4F4F\u4FA7\u952E\u624D\u53EF\u8C03\u6574\u5361\u7247\u5927\u5C0F\u3002\u8FDE\u63A5\u70B9\u4ECD\u53EF\u76F4\u63A5\u62D6\u52A8\u8FDE\u7EBF\u3002",
   largerTouchHandlesName: "\u52A0\u5927\u89E6\u63A7\u6293\u624B",
   largerTouchHandlesDescription: "\u5728\u89E6\u63A7\u8BBE\u5907\u4E0A\u4E3A Markdown \u6293\u624B\u4F7F\u7528 44 \xD7 44 \u7684\u89E6\u63A7\u533A\u57DF\u3002",
   mobileInteractionsName: "\u79FB\u52A8\u7AEF\u591A\u5757\u9009\u62E9",
@@ -6076,6 +6162,11 @@ var MARKDOWN_BINDING_ACTIONS = [
   "move",
   "none"
 ];
+var SAME_MARKDOWN_BINDING_ACTIONS = [
+  "embed-source",
+  "move",
+  "none"
+];
 function modifierOptions(text) {
   return {
     [UNASSIGNED_MODIFIER]: text.modifierUnassigned,
@@ -6111,6 +6202,18 @@ function markdownActionLabel(action, text) {
       return text.cancelDropAction;
   }
 }
+function markdownActionDescription(action, text) {
+  switch (action) {
+    case "embed-source":
+      return text.markdownEmbedActionDescription;
+    case "link-source":
+      return text.markdownLinkActionDescription;
+    case "move":
+      return text.markdownMoveActionDescription;
+    case "none":
+      return text.markdownCancelActionDescription;
+  }
+}
 function canvasActionKey(action) {
   return `canvasAction.${action}`;
 }
@@ -6136,7 +6239,7 @@ function markdownActionFromKey(key) {
 function sameMarkdownActionFromKey(key) {
   if (!key.startsWith("sameMarkdownAction.")) return void 0;
   const action = key.slice("sameMarkdownAction.".length);
-  return isMarkdownBindingAction(action) ? action : void 0;
+  return isMarkdownBindingAction(action) && action !== "link-source" ? action : void 0;
 }
 function isCanvasBindingAction(value) {
   return CANVAS_BINDING_ACTIONS.some((action) => action === value);
@@ -6182,8 +6285,8 @@ var DragDropSettingTab = class extends import_obsidian10.PluginSettingTab {
     const text = settingsTextForLanguage(import_obsidian10.moment.locale());
     const modifiers = modifierOptions(text);
     const canvasActionItems = CANVAS_BINDING_ACTIONS.map((action) => ({
-      name: `${text.canvasScope}: ${canvasActionLabel(action, text)}`,
-      desc: text.canvasActionDescription,
+      name: canvasActionLabel(action, text),
+      desc: action === "link-source" ? text.canvasLinkActionDescription : action === "create-note" ? text.canvasCreateActionDescription : text.markdownCancelActionDescription,
       control: {
         type: "dropdown",
         key: canvasActionKey(action),
@@ -6191,17 +6294,17 @@ var DragDropSettingTab = class extends import_obsidian10.PluginSettingTab {
       }
     }));
     const markdownActionItems = MARKDOWN_BINDING_ACTIONS.map((action) => ({
-      name: `${text.crossMarkdownScope}: ${markdownActionLabel(action, text)}`,
-      desc: text.crossMarkdownActionDescription,
+      name: markdownActionLabel(action, text),
+      desc: action === "move" ? text.crossMarkdownMoveDescription : markdownActionDescription(action, text),
       control: {
         type: "dropdown",
         key: markdownActionKey(action),
         options: modifiers
       }
     }));
-    const sameMarkdownActionItems = MARKDOWN_BINDING_ACTIONS.map((action) => ({
-      name: `${text.sameMarkdownScope}: ${markdownActionLabel(action, text)}`,
-      desc: text.sameMarkdownActionDescription,
+    const sameMarkdownActionItems = SAME_MARKDOWN_BINDING_ACTIONS.map((action) => ({
+      name: markdownActionLabel(action, text),
+      desc: markdownActionDescription(action, text),
       control: {
         type: "dropdown",
         key: sameMarkdownActionKey(action),
@@ -6211,8 +6314,31 @@ var DragDropSettingTab = class extends import_obsidian10.PluginSettingTab {
     return [
       {
         type: "group",
-        heading: text.headingCoreBehavior,
+        heading: text.sameMarkdownScope,
+        items: sameMarkdownActionItems
+      },
+      {
+        type: "group",
+        heading: text.crossMarkdownScope,
         items: [
+          ...markdownActionItems,
+          {
+            name: text.crossMarkdownEmbedAliasName,
+            desc: text.crossMarkdownEmbedAliasDescription,
+            control: { type: "text", key: "crossMarkdownEmbedAlias", placeholder: text.crossMarkdownEmbedAliasPlaceholder }
+          },
+          {
+            name: text.crossFileTargetsName,
+            desc: text.crossFileTargetsDescription,
+            control: { type: "toggle", key: "crossFileFileTargets" }
+          }
+        ]
+      },
+      {
+        type: "group",
+        heading: text.canvasScope,
+        items: [
+          ...canvasActionItems,
           {
             name: text.folderStrategyName,
             desc: text.folderStrategyDescription,
@@ -6248,25 +6374,9 @@ var DragDropSettingTab = class extends import_obsidian10.PluginSettingTab {
             }
           },
           {
-            name: text.structuralMovesName,
-            desc: text.structuralMovesDescription,
-            control: { type: "toggle", key: "structuralMarkdownMoves" }
-          }
-        ]
-      },
-      {
-        type: "group",
-        heading: text.headingSelection,
-        items: [
-          {
             name: text.splitListItemsName,
             desc: text.splitListItemsDescription,
             control: { type: "toggle", key: "splitListItems" }
-          },
-          {
-            name: text.multiBlockSelectionName,
-            desc: text.multiBlockSelectionDescription,
-            control: { type: "toggle", key: "multiBlockSelection" }
           },
           ...this.host.config.splitListItems ? [{
             name: text.listParentDisplayName,
@@ -6279,13 +6389,7 @@ var DragDropSettingTab = class extends import_obsidian10.PluginSettingTab {
                 "self-only": text.listParentSelf
               }
             }
-          }] : []
-        ]
-      },
-      {
-        type: "group",
-        heading: text.headingAppearance,
-        items: [
+          }] : [],
           {
             name: text.nodeWidthName,
             desc: text.nodeWidthDescription,
@@ -6301,6 +6405,17 @@ var DragDropSettingTab = class extends import_obsidian10.PluginSettingTab {
             desc: text.verticalGapDescription,
             control: { type: "number", key: "nodeGap", min: 0, max: 400, step: 1 }
           },
+          {
+            name: text.canvasSummaryButtonName,
+            desc: text.canvasSummaryButtonDescription,
+            control: { type: "toggle", key: "canvasSummaryButton" }
+          }
+        ]
+      },
+      {
+        type: "group",
+        heading: text.headingAppearance,
+        items: [
           {
             name: text.previewWidthName,
             desc: text.previewWidthDescription,
@@ -6326,11 +6441,6 @@ var DragDropSettingTab = class extends import_obsidian10.PluginSettingTab {
                 always: text.handleVisibilityAlways
               }
             }
-          },
-          {
-            name: text.canvasSummaryButtonName,
-            desc: text.canvasSummaryButtonDescription,
-            control: { type: "toggle", key: "canvasSummaryButton" }
           }
         ]
       },
@@ -6365,24 +6475,23 @@ var DragDropSettingTab = class extends import_obsidian10.PluginSettingTab {
             name: text.mobileInteractionsName,
             desc: text.mobileInteractionsDescription,
             control: { type: "toggle", key: "mobileBlockInteractions" }
-          },
-          {
-            name: text.selectionMenuTimeoutName,
-            desc: text.selectionMenuTimeoutDescription,
-            control: {
-              type: "number",
-              key: "selectionMenuAutoDismissSeconds",
-              min: -1,
-              max: 3600,
-              step: 0.1
-            }
           }
         ]
       },
       {
         type: "group",
-        heading: text.headingAdvanced,
+        heading: text.headingMarkdown,
         items: [
+          {
+            name: text.multiBlockSelectionName,
+            desc: text.multiBlockSelectionDescription,
+            control: { type: "toggle", key: "multiBlockSelection" }
+          },
+          {
+            name: text.structuralMovesName,
+            desc: text.structuralMovesDescription,
+            control: { type: "toggle", key: "structuralMarkdownMoves" }
+          },
           {
             name: text.editableEmbedsName,
             desc: text.editableEmbedsDescription,
@@ -6394,25 +6503,6 @@ var DragDropSettingTab = class extends import_obsidian10.PluginSettingTab {
             control: { type: "toggle", key: "blockTypeMenu" }
           },
           {
-            name: text.crossFileTargetsName,
-            desc: text.crossFileTargetsDescription,
-            control: { type: "toggle", key: "crossFileFileTargets" }
-          },
-          {
-            name: text.crossMarkdownEmbedAliasName,
-            desc: text.crossMarkdownEmbedAliasDescription,
-            control: {
-              type: "text",
-              key: "crossMarkdownEmbedAlias",
-              placeholder: text.crossMarkdownEmbedAliasPlaceholder
-            }
-          },
-          {
-            name: text.edgeAutoScrollName,
-            desc: text.edgeAutoScrollDescription,
-            control: { type: "toggle", key: "edgeAutoScroll" }
-          },
-          {
             name: text.preserveFoldStateName,
             desc: text.preserveFoldStateDescription,
             control: { type: "toggle", key: "preserveFoldState" }
@@ -6421,6 +6511,22 @@ var DragDropSettingTab = class extends import_obsidian10.PluginSettingTab {
             name: text.renumberListsName,
             desc: text.renumberListsDescription,
             control: { type: "toggle", key: "renumberOrderedLists" }
+          }
+        ]
+      },
+      {
+        type: "group",
+        heading: text.headingAdvanced,
+        items: [
+          {
+            name: text.selectionMenuTimeoutName,
+            desc: text.selectionMenuTimeoutDescription,
+            control: { type: "number", key: "selectionMenuAutoDismissSeconds", min: -1, max: 3600, step: 0.1 }
+          },
+          {
+            name: text.edgeAutoScrollName,
+            desc: text.edgeAutoScrollDescription,
+            control: { type: "toggle", key: "edgeAutoScroll" }
           },
           ...this.host.config.edgeAutoScroll ? [
             {
@@ -6445,10 +6551,7 @@ var DragDropSettingTab = class extends import_obsidian10.PluginSettingTab {
                 step: 1
               }
             }
-          ] : [],
-          ...canvasActionItems,
-          ...sameMarkdownActionItems,
-          ...markdownActionItems
+          ] : []
         ]
       }
     ];

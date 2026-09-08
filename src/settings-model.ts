@@ -205,13 +205,14 @@ function migrateSettings(loaded: LegacySettings): Partial<DragDropSettings> {
 function mergeMarkdownBindings(
   loaded: Record<string, unknown> | undefined,
   legacyLinks: boolean,
+  allowAliasLinks = true,
 ): Record<ModifierChord, MarkdownDropAction> {
   const bindings = {
     ...DEFAULT_SETTINGS.markdownBindings,
     ...loaded,
   };
   for (const chord of Object.keys(bindings) as ModifierChord[]) {
-    if (legacyLinks && bindings[chord] === "link-source") {
+    if ((!allowAliasLinks || legacyLinks) && bindings[chord] === "link-source") {
       bindings[chord] = "embed-source";
     }
   }
@@ -233,6 +234,7 @@ export function mergeSettings(
   const sameMarkdownBindings = mergeMarkdownBindings(
     loadedSameMarkdownBindings ?? loadedMarkdownBindings,
     legacyLinks,
+    false,
   );
   const hasLegacyDefaults =
     legacyLinks &&

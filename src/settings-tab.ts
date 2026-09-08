@@ -102,6 +102,12 @@ const MARKDOWN_BINDING_ACTIONS: MarkdownBindingAction[] = [
   "none",
 ];
 
+const SAME_MARKDOWN_BINDING_ACTIONS: MarkdownBindingAction[] = [
+  "embed-source",
+  "move",
+  "none",
+];
+
 function modifierOptions(text: SettingsText): Record<BindingModifier, string> {
   return {
     [UNASSIGNED_MODIFIER]: text.modifierUnassigned,
@@ -130,6 +136,15 @@ function markdownActionLabel(action: MarkdownBindingAction, text: SettingsText):
     case "link-source": return text.markdownLinkAction;
     case "move": return text.markdownMoveAction;
     case "none": return text.cancelDropAction;
+  }
+}
+
+function markdownActionDescription(action: MarkdownBindingAction, text: SettingsText): string {
+  switch (action) {
+    case "embed-source": return text.markdownEmbedActionDescription;
+    case "link-source": return text.markdownLinkActionDescription;
+    case "move": return text.markdownMoveActionDescription;
+    case "none": return text.markdownCancelActionDescription;
   }
 }
 
@@ -164,7 +179,7 @@ function markdownActionFromKey(key: string): MarkdownBindingAction | undefined {
 function sameMarkdownActionFromKey(key: string): MarkdownBindingAction | undefined {
   if (!key.startsWith("sameMarkdownAction.")) return undefined;
   const action = key.slice("sameMarkdownAction.".length);
-  return isMarkdownBindingAction(action) ? action : undefined;
+  return isMarkdownBindingAction(action) && action !== "link-source" ? action : undefined;
 }
 
 function isCanvasBindingAction(value: string): value is CanvasBindingAction {
@@ -221,8 +236,9 @@ export class DragDropSettingTab extends PluginSettingTab {
     const text = settingsTextForLanguage(moment.locale());
     const modifiers = modifierOptions(text);
     const canvasActionItems: DragDropSettingDefinition[] = CANVAS_BINDING_ACTIONS.map((action) => ({
-      name: `${text.canvasScope}: ${canvasActionLabel(action, text)}`,
-      desc: text.canvasActionDescription,
+      name: canvasActionLabel(action, text),
+      desc: action === "link-source" ? text.canvasLinkActionDescription
+        : action === "create-note" ? text.canvasCreateActionDescription : text.markdownCancelActionDescription,
       control: {
         type: "dropdown",
         key: canvasActionKey(action),
@@ -230,17 +246,17 @@ export class DragDropSettingTab extends PluginSettingTab {
       },
     }));
     const markdownActionItems: DragDropSettingDefinition[] = MARKDOWN_BINDING_ACTIONS.map((action) => ({
-      name: `${text.crossMarkdownScope}: ${markdownActionLabel(action, text)}`,
-      desc: text.crossMarkdownActionDescription,
+      name: markdownActionLabel(action, text),
+      desc: action === "move" ? text.crossMarkdownMoveDescription : markdownActionDescription(action, text),
       control: {
         type: "dropdown",
         key: markdownActionKey(action),
         options: modifiers,
       },
     }));
-    const sameMarkdownActionItems: DragDropSettingDefinition[] = MARKDOWN_BINDING_ACTIONS.map((action) => ({
-      name: `${text.sameMarkdownScope}: ${markdownActionLabel(action, text)}`,
-      desc: text.sameMarkdownActionDescription,
+    const sameMarkdownActionItems: DragDropSettingDefinition[] = SAME_MARKDOWN_BINDING_ACTIONS.map((action) => ({
+      name: markdownActionLabel(action, text),
+      desc: markdownActionDescription(action, text),
       control: {
         type: "dropdown",
         key: sameMarkdownActionKey(action),
@@ -251,8 +267,31 @@ export class DragDropSettingTab extends PluginSettingTab {
     return [
       {
         type: "group",
-        heading: text.headingCoreBehavior,
+        heading: text.sameMarkdownScope,
+        items: sameMarkdownActionItems,
+      },
+      {
+        type: "group",
+        heading: text.crossMarkdownScope,
         items: [
+          ...markdownActionItems,
+          {
+            name: text.crossMarkdownEmbedAliasName,
+            desc: text.crossMarkdownEmbedAliasDescription,
+            control: { type: "text", key: "crossMarkdownEmbedAlias", placeholder: text.crossMarkdownEmbedAliasPlaceholder },
+          },
+          {
+            name: text.crossFileTargetsName,
+            desc: text.crossFileTargetsDescription,
+            control: { type: "toggle", key: "crossFileFileTargets" },
+          },
+        ],
+      },
+      {
+        type: "group",
+        heading: text.canvasScope,
+        items: [
+          ...canvasActionItems,
           {
             name: text.folderStrategyName,
             desc: text.folderStrategyDescription,
@@ -290,25 +329,9 @@ export class DragDropSettingTab extends PluginSettingTab {
             },
           },
           {
-            name: text.structuralMovesName,
-            desc: text.structuralMovesDescription,
-            control: { type: "toggle", key: "structuralMarkdownMoves" },
-          },
-        ],
-      },
-      {
-        type: "group",
-        heading: text.headingSelection,
-        items: [
-          {
             name: text.splitListItemsName,
             desc: text.splitListItemsDescription,
             control: { type: "toggle", key: "splitListItems" },
-          },
-          {
-            name: text.multiBlockSelectionName,
-            desc: text.multiBlockSelectionDescription,
-            control: { type: "toggle", key: "multiBlockSelection" },
           },
           ...(this.host.config.splitListItems
             ? [{
@@ -324,12 +347,6 @@ export class DragDropSettingTab extends PluginSettingTab {
                 },
               }]
             : []),
-        ],
-      },
-      {
-        type: "group",
-        heading: text.headingAppearance,
-        items: [
           {
             name: text.nodeWidthName,
             desc: text.nodeWidthDescription,
@@ -345,6 +362,17 @@ export class DragDropSettingTab extends PluginSettingTab {
             desc: text.verticalGapDescription,
             control: { type: "number", key: "nodeGap", min: 0, max: 400, step: 1 },
           },
+          {
+            name: text.canvasSummaryButtonName,
+            desc: text.canvasSummaryButtonDescription,
+            control: { type: "toggle", key: "canvasSummaryButton" },
+          },
+        ],
+      },
+      {
+        type: "group",
+        heading: text.headingAppearance,
+        items: [
           {
             name: text.previewWidthName,
             desc: text.previewWidthDescription,
@@ -370,11 +398,6 @@ export class DragDropSettingTab extends PluginSettingTab {
                 always: text.handleVisibilityAlways,
               },
             },
-          },
-          {
-            name: text.canvasSummaryButtonName,
-            desc: text.canvasSummaryButtonDescription,
-            control: { type: "toggle", key: "canvasSummaryButton" },
           },
         ],
       },
@@ -410,23 +433,22 @@ export class DragDropSettingTab extends PluginSettingTab {
             desc: text.mobileInteractionsDescription,
             control: { type: "toggle", key: "mobileBlockInteractions" },
           },
-          {
-            name: text.selectionMenuTimeoutName,
-            desc: text.selectionMenuTimeoutDescription,
-            control: {
-              type: "number",
-              key: "selectionMenuAutoDismissSeconds",
-              min: -1,
-              max: 3_600,
-              step: 0.1,
-            },
-          },
         ],
       },
       {
         type: "group",
-        heading: text.headingAdvanced,
+        heading: text.headingMarkdown,
         items: [
+          {
+            name: text.multiBlockSelectionName,
+            desc: text.multiBlockSelectionDescription,
+            control: { type: "toggle", key: "multiBlockSelection" },
+          },
+          {
+            name: text.structuralMovesName,
+            desc: text.structuralMovesDescription,
+            control: { type: "toggle", key: "structuralMarkdownMoves" },
+          },
           {
             name: text.editableEmbedsName,
             desc: text.editableEmbedsDescription,
@@ -438,25 +460,6 @@ export class DragDropSettingTab extends PluginSettingTab {
             control: { type: "toggle", key: "blockTypeMenu" },
           },
           {
-            name: text.crossFileTargetsName,
-            desc: text.crossFileTargetsDescription,
-            control: { type: "toggle", key: "crossFileFileTargets" },
-          },
-          {
-            name: text.crossMarkdownEmbedAliasName,
-            desc: text.crossMarkdownEmbedAliasDescription,
-            control: {
-              type: "text",
-              key: "crossMarkdownEmbedAlias",
-              placeholder: text.crossMarkdownEmbedAliasPlaceholder,
-            },
-          },
-          {
-            name: text.edgeAutoScrollName,
-            desc: text.edgeAutoScrollDescription,
-            control: { type: "toggle", key: "edgeAutoScroll" },
-          },
-          {
             name: text.preserveFoldStateName,
             desc: text.preserveFoldStateDescription,
             control: { type: "toggle", key: "preserveFoldState" },
@@ -465,6 +468,22 @@ export class DragDropSettingTab extends PluginSettingTab {
             name: text.renumberListsName,
             desc: text.renumberListsDescription,
             control: { type: "toggle", key: "renumberOrderedLists" },
+          },
+        ],
+      },
+      {
+        type: "group",
+        heading: text.headingAdvanced,
+        items: [
+          {
+            name: text.selectionMenuTimeoutName,
+            desc: text.selectionMenuTimeoutDescription,
+            control: { type: "number", key: "selectionMenuAutoDismissSeconds", min: -1, max: 3_600, step: 0.1 },
+          },
+          {
+            name: text.edgeAutoScrollName,
+            desc: text.edgeAutoScrollDescription,
+            control: { type: "toggle", key: "edgeAutoScroll" },
           },
           ...(this.host.config.edgeAutoScroll
             ? [
@@ -492,9 +511,6 @@ export class DragDropSettingTab extends PluginSettingTab {
                 },
               ]
             : []),
-          ...canvasActionItems,
-          ...sameMarkdownActionItems,
-          ...markdownActionItems,
         ],
       },
     ];

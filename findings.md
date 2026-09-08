@@ -1,5 +1,20 @@
 # 发现与决策
 
+## 8.11 侧键缩放与 iPad（2026-09-08）
+
+- 用户确认上轮问题已解决，新增规则为缩放须在落笔时按住 Surface Pen 侧键。笔尖命中 resizer 改派 Canvas wrapper 中键平移；连接点排除在 resizer 判定外，继续直接连线。动作在一次笔势中固定，途中按侧键不把平移变为缩放。
+- iPad 仅调研，不把当前 pen 类型兼容当作已验收。公开 API 未提供 Pencil 双击/挤压桥接；Apple 原生 API 不能直接由社区插件调用。
+- 推荐屏幕临时操作键映射侧键，点按仅下一笔生效作为基础，按住作为设备多指验证后的增强。Pencil Pro 挤压 -> 快捷指令 -> URI 武装下一笔可实验，不能模拟连续按住状态。详见 ipad-pencil-research.md。
+
+## 8.10 设置与 Surface Pen 控件（2026-09-08）
+
+- 只删除同文件别名双链；跨文件普通双链和用户其他绑定保留。同文件旧 link-source 加载为非破坏性的 embed-source，设置写入入口拒绝重新配置该动作。
+- 本机安装目录 resources/obsidian.asar 的 app.js 确认：原生 onResizePointerdown 要求 isPrimary、button=0、pointerType=mouse；四边还检查事件目标就是 resizer。旧 pen 原样放行不能满足这些条件。
+- onConnectionPointerdown 要求 isPrimary 和 button=0；侧键 buttons=2/3 必须映射为左键。原生 ig 在事件 view 上监听 pointermove/up/cancel，因此适配保留 owner window、pointerId 和完整序列。
+- 控件适配不主动 setPointerCapture，不实现连线/缩放写入；Canvas 原生状态机继续负责阈值、落点菜单、保存和取消。控件移除后合成事件发往 owner document，仍可冒泡到窗口监听器。
+- 普通输入控件保持完整序列旁路；连接点优先于包含它的 resizer。SVG 连线仅按实际 DOM 命中，不以斜线外接矩形抢占画布空白。
+- 当前工具未提供原生 Windows 操作入口；本轮没有实体 Surface 输入通过证据，自动化结果不能标记为实机通过。
+
 ## 需求
 - 插件 ID 与名称使用 `dragdrop` / `DragDrop`，不与 CardNote 同时启用。
 - 仅服务 Obsidian Canvas 白板；不保留 Excalidraw、搜索视图、自动预览分栏。
