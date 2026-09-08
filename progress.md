@@ -1,5 +1,12 @@
 # 进度日志
 
+## 0.1.8 发布完成与 8.12 开始
+
+- 197 项测试、lint/typecheck/build/语法/diff 检查通过；提交 1e02ca6 已推送至 codex/stage-8-dragger-integration，tag 0.1.8 已推送。
+- 正式 Release：https://github.com/Rex-Diego/dragdrop/releases/tag/0.1.8，main.js、manifest.json、styles.css 的 GitHub digest 与本地 SHA-256 一致。
+- package-lock.json 属于仓库既有忽略文件，已本地同步版本，不强行纳入版本管理。仓库无 release workflow，沿用 gh release 手动发布。
+- 开始用户批准的 iPad 手指/Pencil 映射实现，不依赖 Pencil 原生专有手势。
+
 ## 0.1.8 发布准备
 
 - 用户授权先 commit、push、release 当前修复，再实施 iPad 手指/Pencil 映射。版本文件统一升至 0.1.8，发布说明与 Surface 侧键缩放规则一致。

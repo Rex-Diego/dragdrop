@@ -1,5 +1,11 @@
 # 发现与决策
 
+## 8.12 用户锁定 iPad 映射
+
+- 手指替代 Surface Pen 笔尖，Apple Pencil 替代侧键；不需要临时操作键、双击或挤压 API。
+- Pencil 接触按操作笔处理，Canvas 左键选择/移动/缩放；Markdown 继续使用真实修饰键对应绑定，Canvas 块投放使用普通 Canvas 绑定。不能把 Pencil 强制当作 Primary 搬移。
+- 仅 iOS 平台启用，可在设置关闭；桌面与 Android 保留原规则，原生鼠标 HTML5 路径不变。
+
 ## 8.11 侧键缩放与 iPad（2026-09-08）
 
 - 用户确认上轮问题已解决，新增规则为缩放须在落笔时按住 Surface Pen 侧键。笔尖命中 resizer 改派 Canvas wrapper 中键平移；连接点排除在 resizer 判定外，继续直接连线。动作在一次笔势中固定，途中按侧键不把平移变为缩放。

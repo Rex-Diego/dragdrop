@@ -7,6 +7,7 @@ import {
   Notice,
   parseLinktext,
   Menu,
+  Platform,
   TFile,
   type App,
   type WorkspaceLeaf,
@@ -25,6 +26,7 @@ import {
   sourceBlockLink,
 } from "./block-reference";
 import { CanvasAdapter, type CanvasDropTarget, type CanvasItemSpec } from "./canvas-adapter";
+import { CanvasTouchNavigation, supportsCanvasNavigation } from "./canvas-touch-navigation";
 import { planCanvasReferences, type CanvasReference } from "./canvas-reference";
 import { buildHandleRanges, collectSourceUnits, previewMarkdownForUnits } from "./content-segmentation";
 import type { HandleRange } from "./content-segmentation";
@@ -81,6 +83,7 @@ import {
   createCanvasPointerEventInit,
   hasCrossedPointerDragThreshold,
   isCanvasNativeControlElement,
+  isCanvasEditingElement,
   isCanvasResizeHandleElement,
   isSurfacePenSideButton,
   matchesPointerDrag,
@@ -103,6 +106,7 @@ interface PointerDrag {
   handle: HandleRange;
   element: HTMLElement;
   surfacePenSideButton: boolean;
+  pointerType: string;
   startX: number;
   startY: number;
   active: boolean;
@@ -138,6 +142,10 @@ interface CanvasPenDrag {
   captureTarget: PointerCaptureElement;
   button: 0 | 1;
   suppressContextMenu: boolean;
+  lastEvent: PointerEvent;
+  startX: number;
+  startY: number;
+  moved: boolean;
 }
 
 interface CanvasPenInteraction {
@@ -236,6 +244,10 @@ export class DragSessionManager extends Component implements DragStarter {
     lastEvent: PointerEvent;
   } | null = null;
   private canvasPenPassthroughPointer: { pointerId: number; ownerDocument: Document } | null = null;
+  private canvasTouchNavigation: CanvasTouchNavigation | null = null;
+  private readonly iosBlockedPointers = new Map<number, Document>();
+  private readonly iosSuppressedTouches = new Map<number, Document>();
+  private iosClickSuppression: { ownerDocument: Document; clientX: number; clientY: number; expiresAt: number } | null = null;
   private canvasPenContextMenuSuppression: CanvasPenContextMenuSuppression | null = null;
   private readonly syntheticCanvasEvents = new WeakSet<Event>();
   private ghostElement: HTMLElement | null = null;
@@ -284,6 +296,7 @@ export class DragSessionManager extends Component implements DragStarter {
   }
 
   onunload(): void {
+    for (const document of this.documentComponents.keys()) this.cancelCanvasInputs(document);
     this.cleanupDrag();
     this.cancelSelectionPointer();
     this.blockSelections.clear();
@@ -296,6 +309,7 @@ export class DragSessionManager extends Component implements DragStarter {
     handle: HandleRange,
     element: HTMLElement,
   ): boolean {
+    if (this.ignoreIosCompetingHandlePointer(event, element)) return true;
     this.clearStaleBlockSelection(view);
     if (this.isStructuralDragBlocked(view, element)) {
       event.preventDefault();
@@ -415,16 +429,18 @@ export class DragSessionManager extends Component implements DragStarter {
     handle: HandleRange,
     element: HTMLElement,
   ): void {
+    if (this.ignoreIosCompetingHandlePointer(event, element)) return;
     if (this.isStructuralDragBlocked(view, element)) {
       event.preventDefault();
       event.stopPropagation();
       return;
     }
     const supportedPointer = event.pointerType === "touch" || event.pointerType === "pen";
-    const sideButton = isSurfacePenSideButton(event);
+    const iosPencil = this.iosPencilEnabled && event.pointerType === "pen";
+    const sideButton = iosPencil || isSurfacePenSideButton(event);
     if (
       !supportedPointer ||
-      (sideButton
+      (!iosPencil && sideButton
         ? !this.host.config.surfacePenSideButtonDrag
         : !event.isPrimary)
     ) {
@@ -440,6 +456,7 @@ export class DragSessionManager extends Component implements DragStarter {
       handle,
       element,
       surfacePenSideButton: sideButton,
+      pointerType: event.pointerType,
       startX: event.clientX,
       startY: event.clientY,
       active: false,
@@ -1109,6 +1126,14 @@ export class DragSessionManager extends Component implements DragStarter {
         this.finishSelectionPointer(event.pointerId);
         this.handleCanvasPenPointerCancel(event);
       }, true);
+      component.registerDomEvent(ownerWindow, "lostpointercapture", (event) => {
+        this.handleCanvasPenPointerCancel(event);
+      }, true);
+      component.registerDomEvent(ownerWindow, "blur", () => this.cancelCanvasInputs(document));
+      for (const type of ["touchstart", "touchmove", "touchend", "touchcancel"] as const) {
+        component.registerDomEvent(ownerWindow, type, (event) => this.suppressIosTouchEvent(event), { capture: true, passive: false });
+      }
+      component.registerDomEvent(ownerWindow, "click", (event) => this.suppressIosClick(event), true);
       component.registerDomEvent(ownerWindow, "mousedown", (event) => {
         this.handleCanvasPenMouseDown(event);
       }, true);
@@ -1122,6 +1147,9 @@ export class DragSessionManager extends Component implements DragStarter {
         this.handleCanvasPenContextMenu(event);
       }, true);
     }
+    component.registerDomEvent(document, "visibilitychange", () => {
+      if (document.hidden) this.cancelCanvasInputs(document);
+    });
     component.registerDomEvent(document, "keydown", (event) => {
       if (event.key !== "Escape") return;
       this.clearBlockSelectionsInDocument(document);
@@ -1134,6 +1162,7 @@ export class DragSessionManager extends Component implements DragStarter {
   }
 
   private unregisterDocument(document: Document): void {
+    this.cancelCanvasInputs(document);
     if (this.canvasPenNativePointer?.ownerDocument === document) this.cleanupDrag();
     this.clearBlockSelectionsInDocument(document);
     if (this.selectionPointer?.view.dom.ownerDocument === document) {
@@ -1146,11 +1175,124 @@ export class DragSessionManager extends Component implements DragStarter {
     this.documentComponents.delete(document);
   }
 
+  private get iosPencilEnabled(): boolean {
+    return Platform.isIosApp && this.host.config.iosPencilMapping;
+  }
+
+  private consumePointer(event: Event): void {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+  }
+
+  private ignoreIosCompetingHandlePointer(event: PointerEvent, element: HTMLElement): boolean {
+    if (!this.iosPencilEnabled || (event.pointerType !== "pen" && event.pointerType !== "touch")) return false;
+    if (!this.pointerDrag && !this.canvasPenDrag && !this.canvasPenNativePointer && !this.canvasTouchNavigation) return false;
+    this.iosBlockedPointers.set(event.pointerId, element.ownerDocument);
+    this.consumePointer(event);
+    return true;
+  }
+
+  private cancelTouchNavigation(blockRemaining: boolean): void {
+    const navigation = this.canvasTouchNavigation;
+    if (!navigation) return;
+    this.canvasTouchNavigation = null;
+    if (blockRemaining) {
+      for (const id of navigation.pointers.keys()) this.iosBlockedPointers.set(id, navigation.target.ownerDocument);
+    }
+    navigation.clear();
+  }
+
+  private handleIosNavigationEvent(event: PointerEvent, end: boolean): boolean {
+    const blockedDocument = this.iosBlockedPointers.get(event.pointerId);
+    if (blockedDocument && this.isSameEventDocument(event, blockedDocument)) {
+      if (end) {
+        this.iosBlockedPointers.delete(event.pointerId);
+        this.rememberIosClick(event);
+      }
+      this.consumePointer(event);
+      return true;
+    }
+    const navigation = this.canvasTouchNavigation;
+    if (event.pointerType !== "touch" || !navigation?.pointers.has(event.pointerId) ||
+      !this.isSameEventDocument(event, navigation.target.ownerDocument)) return false;
+    this.consumePointer(event);
+    if (end) {
+      navigation.remove(event.pointerId);
+      this.rememberIosClick(event);
+      if (navigation.pointers.size === 0) this.canvasTouchNavigation = null;
+    } else if (!navigation.target.isConnected || !this.iosPencilEnabled) {
+      this.cancelTouchNavigation(true);
+    } else {
+      navigation.move(event);
+    }
+    return true;
+  }
+
+  private rememberIosClick(event: PointerEvent): void {
+    if (!this.iosPencilEnabled) return;
+    const target = this.elementFromEventTarget(event.target);
+    if (target) this.iosClickSuppression = {
+      ownerDocument: target.ownerDocument, clientX: event.clientX, clientY: event.clientY, expiresAt: Date.now() + 1_000,
+    };
+  }
+
+  private suppressIosClick(event: MouseEvent): void {
+    if (this.syntheticCanvasEvents.has(event)) return;
+    if ("pointerType" in event && event.pointerType === "mouse") return;
+    const suppression = this.iosClickSuppression;
+    if (suppression && suppression.expiresAt >= Date.now() && this.isSameEventDocument(event, suppression.ownerDocument) &&
+      Math.hypot(event.clientX - suppression.clientX, event.clientY - suppression.clientY) < 25) this.consumePointer(event);
+  }
+
+  private suppressIosTouchEvent(event: TouchEvent): void {
+    const target = this.elementFromEventTarget(event.target);
+    if (!target) return;
+    const doc = target.ownerDocument;
+    if (event.type === "touchstart" && this.iosPencilEnabled) {
+      const owned = this.canvasTouchNavigation?.target.contains(target) ||
+        this.canvasPenDrag?.dispatchTarget.ownerDocument === doc ||
+        this.canvasPenNativePointer?.ownerDocument === doc ||
+        this.pointerDrag?.element.contains(target) ||
+        Array.from(this.iosBlockedPointers.values()).includes(doc);
+      if (owned && !isCanvasEditingElement(target)) {
+        for (const touch of Array.from(event.changedTouches)) this.iosSuppressedTouches.set(touch.identifier, doc);
+      }
+    }
+    let suppress = false;
+    for (const touch of Array.from(event.changedTouches)) {
+      if (this.iosSuppressedTouches.get(touch.identifier) !== doc) continue;
+      suppress = true;
+      if (event.type === "touchend" || event.type === "touchcancel") this.iosSuppressedTouches.delete(touch.identifier);
+    }
+    if (suppress) this.consumePointer(event);
+  }
+
+  private refreshIosPenHover(event: PointerEvent): void {
+    const target = this.elementFromEventTarget(event.target);
+    if (!target || isCanvasEditingElement(target)) return;
+    this.host.app.workspace.iterateAllLeaves((leaf: WorkspaceLeaf) => {
+      if (!isCanvasView(leaf.view) || !leaf.view.containerEl.contains(target)) return;
+      const canvas = leaf.view.canvas as typeof leaf.view.canvas & { interactionHitTest?: (event: MouseEvent) => void };
+      canvas.interactionHitTest?.(event);
+    });
+  }
+
+  private cancelCanvasInputs(document: Document): void {
+    if (this.canvasTouchNavigation?.target.ownerDocument === document) this.cancelTouchNavigation(false);
+    if (this.canvasPenDrag?.dispatchTarget.ownerDocument === document || this.canvasPenNativePointer?.ownerDocument === document ||
+      (this.iosPencilEnabled && this.pointerDrag?.element.ownerDocument === document)) this.cleanupDrag();
+    for (const [id, doc] of this.iosBlockedPointers) if (doc === document) this.iosBlockedPointers.delete(id);
+    for (const [id, doc] of this.iosSuppressedTouches) if (doc === document) this.iosSuppressedTouches.delete(id);
+    if (this.iosClickSuppression?.ownerDocument === document) this.iosClickSuppression = null;
+    if (this.canvasPenPassthroughPointer?.ownerDocument === document) this.canvasPenPassthroughPointer = null;
+  }
+
   private handleCanvasPenPointerDown(event: PointerEvent): void {
     if (this.syntheticCanvasEvents.has(event)) return;
-    const interactionType = canvasPenInteractionForEvent(event);
+    const iosMapping = this.iosPencilEnabled;
+    const interactionType = iosMapping && event.pointerType === "touch"
+      ? "pan" : canvasPenInteractionForEvent(event, iosMapping);
     if (!interactionType) return;
-    if (this.canvasPenDrag || this.canvasPenNativePointer || this.pointerDrag) return;
 
     const target = this.elementFromEventTarget(event.target);
     if (!target) return;
@@ -1160,6 +1302,35 @@ export class DragSessionManager extends Component implements DragStarter {
       event.clientX,
       event.clientY,
     );
+    if (iosMapping && event.pointerType === "touch" && interaction) {
+      if (this.pointerDrag || this.canvasPenDrag || this.canvasPenNativePointer) {
+        this.iosBlockedPointers.set(event.pointerId, target.ownerDocument);
+        this.consumePointer(event);
+        return;
+      }
+      const navigation = this.canvasTouchNavigation;
+      if (navigation?.target.contains(target)) {
+        if (!navigation.add(event)) this.iosBlockedPointers.set(event.pointerId, target.ownerDocument);
+        this.consumePointer(event);
+        return;
+      }
+      if (interaction !== "passthrough" && !interaction.native) {
+        if (!event.isPrimary) return;
+        this.host.app.workspace.iterateAllLeaves((leaf: WorkspaceLeaf) => {
+          if (!isCanvasView(leaf.view) || !leaf.view.containerEl.contains(target)) return;
+          if (supportsCanvasNavigation(leaf.view.canvas)) {
+            const next = new CanvasTouchNavigation(interaction.dispatchTarget, leaf.view.canvas);
+            if (next.add(event)) this.canvasTouchNavigation = next;
+          }
+        });
+        if (this.canvasTouchNavigation) this.consumePointer(event);
+        return;
+      }
+    }
+    if (iosMapping && event.pointerType === "pen" && interaction && interaction !== "passthrough") {
+      this.cancelTouchNavigation(true);
+    }
+    if (this.canvasPenDrag || this.canvasPenNativePointer || this.pointerDrag) return;
     if (interaction === "passthrough") {
       this.canvasPenPassthroughPointer = { pointerId: event.pointerId, ownerDocument: target.ownerDocument };
       return;
@@ -1176,7 +1347,7 @@ export class DragSessionManager extends Component implements DragStarter {
       this.dispatchCanvasPointerEvent("pointerdown", event, interaction.dispatchTarget, 1, 0);
       return;
     }
-    if (interactionType === "select" && !this.host.config.surfacePenSideButtonDrag) return;
+    if (interactionType === "select" && !iosMapping && !this.host.config.surfacePenSideButtonDrag) return;
     if (!interaction || !this.beginCanvasPenDrag(event, interaction)) return;
 
     event.preventDefault();
@@ -1185,6 +1356,7 @@ export class DragSessionManager extends Component implements DragStarter {
 
   private handleCanvasPenPointerMove(event: PointerEvent): void {
     if (this.syntheticCanvasEvents.has(event)) return;
+    if (this.handleIosNavigationEvent(event, false)) return;
     if (this.isCanvasPenPassthroughPointer(event)) return;
     const nativePointer = this.canvasPenNativePointer;
     if (nativePointer && this.isCanvasPenNativePointer(event)) {
@@ -1197,6 +1369,10 @@ export class DragSessionManager extends Component implements DragStarter {
     if (nativePointer) return;
 
     if (!this.canvasPenDrag) {
+      if (this.iosPencilEnabled) {
+        if (event.pointerType === "pen" && event.buttons === 0) this.refreshIosPenHover(event);
+        return;
+      }
       const interactionType = canvasPenInteractionForEvent(event);
       if (!interactionType || (interactionType === "select" && !this.host.config.surfacePenSideButtonDrag)) return;
       if (this.pointerDrag) return;
@@ -1218,6 +1394,8 @@ export class DragSessionManager extends Component implements DragStarter {
       drag.pointerId !== event.pointerId ||
       !this.isSameEventDocument(event, drag.dispatchTarget.ownerDocument)
     ) return;
+    drag.lastEvent = event;
+    drag.moved ||= hasCrossedPointerDragThreshold(drag.startX, drag.startY, event.clientX, event.clientY);
     event.preventDefault();
     event.stopImmediatePropagation();
     this.dispatchCanvasPointerEvent(
@@ -1231,6 +1409,7 @@ export class DragSessionManager extends Component implements DragStarter {
 
   private handleCanvasPenPointerUp(event: PointerEvent): void {
     if (this.syntheticCanvasEvents.has(event)) return;
+    if (this.handleIosNavigationEvent(event, true)) return;
     if (this.isCanvasPenPassthroughPointer(event)) {
       this.canvasPenPassthroughPointer = null;
       return;
@@ -1240,6 +1419,7 @@ export class DragSessionManager extends Component implements DragStarter {
       event.preventDefault();
       event.stopImmediatePropagation();
       this.dispatchCanvasPointerEvent("pointerup", event, nativePointer.dispatchTarget, 0, 0);
+      this.rememberIosClick(event);
       if (isSurfacePenSideButton(nativePointer.lastEvent)) {
         this.canvasPenContextMenuSuppression = { ownerDocument: nativePointer.ownerDocument, expiresAt: Date.now() + 1_000 };
       }
@@ -1256,6 +1436,16 @@ export class DragSessionManager extends Component implements DragStarter {
     event.preventDefault();
     event.stopImmediatePropagation();
     this.dispatchCanvasPointerEvent("pointerup", event, drag.dispatchTarget, 0, drag.button);
+    if (this.iosPencilEnabled && event.pointerType === "pen" && drag.button === 0 && !drag.moved) {
+      const ownerWindow = drag.dispatchTarget.ownerDocument.defaultView;
+      if (ownerWindow) {
+        const click = new ownerWindow.MouseEvent("click", createCanvasPointerEventInit(event, ownerWindow, 0, 0));
+        this.syntheticCanvasEvents.add(click);
+        drag.dispatchTarget.dispatchEvent(click);
+        this.refreshIosPenHover(event);
+      }
+    }
+    this.rememberIosClick(event);
     if (drag.suppressContextMenu) {
       this.canvasPenContextMenuSuppression = {
         ownerDocument: drag.dispatchTarget.ownerDocument,
@@ -1267,6 +1457,7 @@ export class DragSessionManager extends Component implements DragStarter {
 
   private handleCanvasPenPointerCancel(event: PointerEvent): void {
     if (this.syntheticCanvasEvents.has(event)) return;
+    if (this.handleIosNavigationEvent(event, true)) return;
     if (this.isCanvasPenPassthroughPointer(event)) {
       this.canvasPenPassthroughPointer = null;
       return;
@@ -1294,6 +1485,10 @@ export class DragSessionManager extends Component implements DragStarter {
 
   private handleCanvasPenMouseDown(event: MouseEvent): void {
     if (this.syntheticCanvasEvents.has(event)) return;
+    if (this.canvasTouchNavigation && this.isSameEventDocument(event, this.canvasTouchNavigation.target.ownerDocument)) {
+      this.consumePointer(event);
+      return;
+    }
     if (this.suppressCanvasPenNativeMouse(event)) return;
     const drag = this.canvasPenDrag;
     if (!drag || !this.isSameEventDocument(event, drag.dispatchTarget.ownerDocument)) {
@@ -1350,6 +1545,10 @@ export class DragSessionManager extends Component implements DragStarter {
       captureTarget,
       button: interaction.button,
       suppressContextMenu: isSurfacePenSideButton(event),
+      lastEvent: event,
+      startX: event.clientX,
+      startY: event.clientY,
+      moved: false,
     };
     try {
       captureTarget.setPointerCapture(event.pointerId);
@@ -1427,6 +1626,7 @@ export class DragSessionManager extends Component implements DragStarter {
   private clearCanvasPenDrag(): void {
     const drag = this.canvasPenDrag;
     if (!drag) return;
+    this.canvasPenDrag = null;
     try {
       if (drag.captureTarget.hasPointerCapture(drag.pointerId)) {
         drag.captureTarget.releasePointerCapture(drag.pointerId);
@@ -1434,7 +1634,6 @@ export class DragSessionManager extends Component implements DragStarter {
     } catch {
       // The Canvas document may already be closing.
     }
-    this.canvasPenDrag = null;
   }
 
   private elementFromEventTarget(target: EventTarget | null): Element | null {
@@ -1457,12 +1656,16 @@ export class DragSessionManager extends Component implements DragStarter {
         view.containerEl.isConnected &&
         view.containerEl.contains(element)
       ) {
+        if (this.iosPencilEnabled && isCanvasEditingElement(element)) {
+          result = "passthrough";
+          return;
+        }
         const nativeTarget = findCanvasPenDragControl(view.containerEl, element, clientX, clientY);
         if (nativeTarget) {
           // A pen tip over a resize handle should pan the canvas. Holding the
           // Surface Pen side button switches the same hit target to native
           // Canvas resize via the select interaction.
-          if (isCanvasResizeHandleElement(nativeTarget) && interactionType !== "select") {
+          if (interactionType !== "select" && (isCanvasResizeHandleElement(nativeTarget) || this.iosPencilEnabled)) {
             const wrapper = this.findCanvasWrapper(view);
             if (!wrapper?.contains(element)) return;
             result = {
@@ -2435,11 +2638,14 @@ export class DragSessionManager extends Component implements DragStarter {
   }
 
   private cleanupDrag(): void {
+    this.cancelTouchNavigation(true);
     this.clearMarkdownDropTarget();
     this.clearSourceHighlight();
     this.removeGhost();
     this.session = null;
     this.commitGate.reset();
+    const canvasDrag = this.canvasPenDrag;
+    if (canvasDrag) this.dispatchCanvasPointerEvent("pointercancel", canvasDrag.lastEvent, canvasDrag.dispatchTarget, 0, canvasDrag.button);
     this.clearCanvasPenDrag();
     const nativePointer = this.canvasPenNativePointer;
     if (nativePointer) {

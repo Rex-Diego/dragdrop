@@ -1,5 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
-import type { App } from "obsidian";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { Platform, type App } from "obsidian";
 import { DragSessionManager } from "../src/drag-session-manager";
 import { mergeSettings } from "../src/settings-model";
 import { findCanvasPenDragControl } from "../src/pointer-drag";
@@ -7,6 +7,7 @@ import { findCanvasPenDragControl } from "../src/pointer-drag";
 vi.mock("obsidian", () => ({
   Component: class {}, Modal: class {}, Setting: class {}, Menu: class {},
   MarkdownView: class {}, TFile: class {}, Notice: vi.fn(), MarkdownRenderer: {},
+  Platform: { isIosApp: false },
 }));
 
 type Adapter = {
@@ -17,6 +18,10 @@ type Adapter = {
   handleCanvasPenMouseDown(event: MouseEvent): void;
   handleCanvasPenContextMenu(event: MouseEvent): void;
   canvasPenNativePointer: unknown;
+  canvasPenDrag: unknown;
+  canvasTouchNavigation: unknown;
+  cancelCanvasInputs(document: Document): void;
+  suppressIosTouchEvent(event: TouchEvent): void;
 };
 
 function fixture(controlClass = "canvas-node-resizer", direction = "bottom") {
@@ -46,7 +51,7 @@ function fixture(controlClass = "canvas-node-resizer", direction = "bottom") {
       received.push(event);
       return true;
     },
-    setPointerCapture: vi.fn(),
+    setPointerCapture: vi.fn(), releasePointerCapture: vi.fn(), hasPointerCapture: vi.fn(() => true),
   };
   const container = { nodeType: 1, ownerDocument, isConnected: true, contains: () => true,
     querySelectorAll: () => [], querySelector: () => container, closest: () => null,
@@ -56,18 +61,160 @@ function fixture(controlClass = "canvas-node-resizer", direction = "bottom") {
       return true;
     },
     setPointerCapture: vi.fn(), releasePointerCapture: vi.fn(), hasPointerCapture: vi.fn(() => true) };
-  const canvasView = { containerEl: container, getViewType: () => "canvas", canvas: { nodes: new Map() } };
+  const canvas = { nodes: new Map(), panBy: vi.fn(), zoomBy: vi.fn(),
+    posFromEvt: (event: MouseEvent) => ({ x: event.clientX / 2, y: event.clientY / 2 }),
+    domPosFromEvt: (event: MouseEvent) => ({ x: event.clientX, y: event.clientY }), interactionHitTest: vi.fn() };
+  const canvasView = { containerEl: container, getViewType: () => "canvas", canvas };
   const config = mergeSettings(undefined);
   const host = { config, app: { workspace: { iterateAllLeaves: (callback: (leaf: unknown) => void) => callback({ view: canvasView }) } } as unknown as App };
   manager = new DragSessionManager(host) as unknown as Adapter;
   const event = (buttons = 1, pointerId = 7, target: unknown = control) => ({
-    pointerType: "pen", pointerId, target, buttons, button: buttons === 2 ? 2 : 0,
+    pointerType: "pen", pointerId, target, buttons, button: buttons === 2 ? 2 : 0, isPrimary: true,
     clientX: 20, clientY: 30, screenX: 40, screenY: 50,
     ctrlKey: false, metaKey: false, shiftKey: false, altKey: false,
     preventDefault: vi.fn(), stopImmediatePropagation: vi.fn(),
   } as unknown as PointerEvent & { preventDefault: ReturnType<typeof vi.fn>; stopImmediatePropagation: ReturnType<typeof vi.fn> });
-  return { manager, event, received, control, container, ownerDocument, config };
+  return { manager, event, received, control, container, ownerDocument, config, canvas };
 }
+
+beforeEach(() => { Platform.isIosApp = false; });
+
+describe("iOS finger and Pencil mapping", () => {
+  beforeEach(() => { Platform.isIosApp = true; });
+
+  it.each(["top", "right", "bottom", "left", "topright", "bottomright", "bottomleft", "topleft"])("uses Pencil to resize %s without a side button", (direction) => {
+    const { manager, event, received, config } = fixture("canvas-node-resizer", direction);
+    config.surfacePenSideButtonDrag = false;
+    manager.handleCanvasPenPointerDown(event());
+    manager.handleCanvasPenPointerMove(event());
+    manager.handleCanvasPenPointerUp(event(0));
+    expect(received.filter((e) => e.type.startsWith("pointer")).map((e) => [e.type, e.button, e.buttons])).toEqual([
+      ["pointerdown", 0, 1], ["pointermove", -1, 1], ["pointerup", 0, 0],
+    ]);
+  });
+
+  it.each(["top", "right", "bottom", "left", "topright", "bottomright", "bottomleft", "topleft"])("pans instead of resizing under a finger at %s", (direction) => {
+    const { manager, event, received, canvas } = fixture("canvas-node-resizer", direction);
+    manager.handleCanvasPenPointerDown({ ...event(), pointerType: "touch" });
+    manager.handleCanvasPenPointerMove({ ...event(), pointerType: "touch", clientX: 40 });
+    manager.handleCanvasPenPointerUp({ ...event(0), pointerType: "touch", clientX: 40 });
+    expect(canvas.panBy).toHaveBeenCalledWith(-10, 0);
+    expect(canvas.zoomBy).not.toHaveBeenCalled();
+    expect(received).toHaveLength(0);
+    expect(manager.canvasTouchNavigation).toBeNull();
+  });
+
+  it("zooms with two fingers and rebases when one lifts", () => {
+    const { manager, event, canvas } = fixture();
+    const finger = (id: number, x: number, buttons = 1) => ({ ...event(buttons, id), pointerType: "touch", clientX: x, isPrimary: id === 1 });
+    manager.handleCanvasPenPointerDown(finger(1, 0));
+    manager.handleCanvasPenPointerDown(finger(2, 20));
+    manager.handleCanvasPenPointerMove(finger(2, 40));
+    expect(canvas.zoomBy).toHaveBeenCalledWith(1, { x: 20, y: 30 });
+    manager.handleCanvasPenPointerUp(finger(1, 0, 0));
+    manager.handleCanvasPenPointerMove(finger(2, 50));
+    expect(canvas.panBy).toHaveBeenLastCalledWith(-5, 0);
+    expect(canvas.zoomBy).toHaveBeenCalledTimes(1);
+    manager.handleCanvasPenPointerUp(finger(2, 50, 0));
+    expect(manager.canvasTouchNavigation).toBeNull();
+  });
+
+  it("gives Pencil priority over an existing finger pan and ignores that finger until release", () => {
+    const { manager, event, canvas, received } = fixture();
+    manager.handleCanvasPenPointerDown({ ...event(1, 1), pointerType: "touch" });
+    manager.handleCanvasPenPointerDown(event(1, 2));
+    expect(manager.canvasTouchNavigation).toBeNull();
+    expect(received[0]).toMatchObject({ type: "pointerdown", pointerId: 2, button: 0 });
+    manager.handleCanvasPenPointerUp(event(0, 2));
+    const palm = { ...event(1, 1), pointerType: "touch", clientX: 80 };
+    manager.handleCanvasPenPointerMove(palm);
+    expect(palm.preventDefault).toHaveBeenCalled();
+    expect(canvas.panBy).not.toHaveBeenCalled();
+    manager.handleCanvasPenPointerUp({ ...palm, buttons: 0 });
+  });
+
+  it("keeps a new palm contact from stealing Pencil resize", () => {
+    const { manager, event, received, canvas } = fixture();
+    manager.handleCanvasPenPointerDown(event(1, 1));
+    const palm = { ...event(1, 2), pointerType: "touch" };
+    manager.handleCanvasPenPointerDown(palm);
+    manager.handleCanvasPenPointerMove({ ...palm, clientX: 200 });
+    manager.handleCanvasPenPointerUp({ ...palm, buttons: 0 });
+    manager.handleCanvasPenPointerMove(event(1, 1));
+    manager.handleCanvasPenPointerUp(event(0, 1));
+    expect(palm.preventDefault).toHaveBeenCalled();
+    expect(canvas.panBy).not.toHaveBeenCalled();
+    expect(received.filter((e) => e.type.startsWith("pointer"))).toHaveLength(3);
+  });
+
+  it("restores the prior pen behavior when the iOS setting is off", () => {
+    const { manager, event, received, config } = fixture();
+    config.iosPencilMapping = false;
+    manager.handleCanvasPenPointerDown(event());
+    expect(received[0]).toMatchObject({ button: 1, buttons: 4 });
+    manager.handleCanvasPenPointerUp(event(0));
+  });
+
+  it("leaves fingers native when navigation APIs are unavailable", () => {
+    const { manager, event, canvas } = fixture();
+    Reflect.deleteProperty(canvas, "zoomBy");
+    const down = { ...event(), pointerType: "touch" };
+    manager.handleCanvasPenPointerDown(down);
+    expect(down.preventDefault).not.toHaveBeenCalled();
+    expect(manager.canvasTouchNavigation).toBeNull();
+  });
+
+  it("selects on Pencil tap and refreshes controls without hardware hover", () => {
+    const { manager, event, received, canvas } = fixture("canvas-node-container");
+    manager.handleCanvasPenPointerDown(event());
+    manager.handleCanvasPenPointerUp(event(0));
+    expect(received.map((e) => e.type)).toEqual(["pointerdown", "mousedown", "pointerup", "mouseup", "click"]);
+    expect(canvas.interactionHitTest).toHaveBeenCalledOnce();
+  });
+
+  it("does not click after a Pencil drag or cancellation", () => {
+    const { manager, event, received } = fixture("canvas-node-container");
+    manager.handleCanvasPenPointerDown(event());
+    manager.handleCanvasPenPointerMove({ ...event(), clientX: 50 });
+    manager.handleCanvasPenPointerUp(event(0));
+    manager.handleCanvasPenPointerDown(event());
+    manager.handleCanvasPenPointerCancel(event(0));
+    expect(received.filter((e) => e.type === "click")).toHaveLength(0);
+  });
+
+  it.each(["input", "textarea", "button", '[contenteditable="true"]'])("leaves %s editing and controls native", (selector) => {
+    const { manager, event, control, received } = fixture();
+    control.closest = (query) => query.split(", ").includes(selector) ? control : null;
+    for (const pointerType of ["touch", "pen"]) {
+      const down = { ...event(), pointerType };
+      manager.handleCanvasPenPointerDown(down);
+      expect(down.preventDefault).not.toHaveBeenCalled();
+      manager.handleCanvasPenPointerUp({ ...down, buttons: 0 });
+    }
+    expect(received).toHaveLength(0);
+  });
+
+  it("suppresses duplicate TouchEvents through touchend after pointer release", () => {
+    const { manager, event, control } = fixture();
+    manager.handleCanvasPenPointerDown({ ...event(), pointerType: "touch" });
+    const touch = (type: string) => ({ type, target: control, changedTouches: [{ identifier: 42 }], preventDefault: vi.fn(), stopImmediatePropagation: vi.fn() });
+    const start = touch("touchstart");
+    manager.suppressIosTouchEvent(start as unknown as TouchEvent);
+    expect(start.preventDefault).toHaveBeenCalled();
+    manager.handleCanvasPenPointerUp({ ...event(0), pointerType: "touch" });
+    const end = touch("touchend");
+    manager.suppressIosTouchEvent(end as unknown as TouchEvent);
+    expect(end.preventDefault).toHaveBeenCalled();
+  });
+
+  it("cleans up finger capture when its document closes", () => {
+    const { manager, event, ownerDocument, container } = fixture();
+    manager.handleCanvasPenPointerDown({ ...event(), pointerType: "touch" });
+    manager.cancelCanvasInputs(ownerDocument as unknown as Document);
+    expect(manager.canvasTouchNavigation).toBeNull();
+    expect(container.releasePointerCapture).toHaveBeenCalledWith(7);
+  });
+});
 
 describe("Canvas pen control event routing", () => {
   it.each(["top", "right", "bottom", "left", "topright", "bottomright", "bottomleft", "topleft"])("forwards %s resize as one primary mouse pointer sequence with side button", (direction) => {

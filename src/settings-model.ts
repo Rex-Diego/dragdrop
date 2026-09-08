@@ -27,6 +27,7 @@ export interface DragDropSettings {
   handleVisibility: HandleVisibility;
   touchDropAction: TouchDropAction;
   surfacePenSideButtonDrag: boolean;
+  iosPencilMapping: boolean;
   largeTouchHandles: boolean;
   canvasSummaryButton: boolean;
   editableBlockEmbeds: boolean;
@@ -88,6 +89,7 @@ export const DEFAULT_SETTINGS: DragDropSettings = {
   handleVisibility: "hover",
   touchDropAction: "link-source",
   surfacePenSideButtonDrag: true,
+  iosPencilMapping: true,
   largeTouchHandles: true,
   canvasSummaryButton: true,
   editableBlockEmbeds: false,
@@ -287,6 +289,10 @@ export function mergeSettings(
       typeof loaded?.surfacePenSideButtonDrag === "boolean"
         ? loaded.surfacePenSideButtonDrag
         : DEFAULT_SETTINGS.surfacePenSideButtonDrag,
+    iosPencilMapping:
+      typeof loaded?.iosPencilMapping === "boolean"
+        ? loaded.iosPencilMapping
+        : DEFAULT_SETTINGS.iosPencilMapping,
     largeTouchHandles:
       typeof loaded?.largeTouchHandles === "boolean"
         ? loaded.largeTouchHandles

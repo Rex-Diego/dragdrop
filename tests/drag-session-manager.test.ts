@@ -1,7 +1,7 @@
 import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { MarkdownView, TFile, type App, type WorkspaceLeaf } from "obsidian";
+import { MarkdownView, Platform, TFile, type App, type WorkspaceLeaf } from "obsidian";
 import { DragSessionManager } from "../src/drag-session-manager";
 import { MoveConfirmationModal } from "../src/move-confirmation-modal";
 import { mergeSettings } from "../src/settings-model";
@@ -11,6 +11,7 @@ import { testEditor } from "./editor-test-view";
 vi.mock("obsidian", () => ({
   Component: class {}, Modal: class {}, Setting: class {}, Menu: class {},
   MarkdownView: class {}, TFile: class {}, Notice: vi.fn(), MarkdownRenderer: {},
+  Platform: { isIosApp: false },
   parseLinktext: (text: string) => {
     const split = text.indexOf("#");
     return { path: text.slice(0, split), subpath: text.slice(split) };
@@ -63,7 +64,7 @@ function fixture(same = true) {
   return { manager, adapter, target, source, destination, config, host };
 }
 
-beforeEach(() => vi.restoreAllMocks());
+beforeEach(() => { vi.restoreAllMocks(); Platform.isIosApp = false; });
 
 describe("Markdown event and transaction adapters", () => {
   it.each([false, true])("uses actual saved modifiers for pen release, ctrl=%s", async (ctrlKey) => {

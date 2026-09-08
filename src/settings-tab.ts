@@ -50,6 +50,7 @@ type ScalarSettingKey =
   | "handleVisibility"
   | "touchDropAction"
   | "surfacePenSideButtonDrag"
+  | "iosPencilMapping"
   | "largeTouchHandles"
   | "canvasSummaryButton"
   | "editableBlockEmbeds"
@@ -424,6 +425,11 @@ export class DragDropSettingTab extends PluginSettingTab {
             control: { type: "toggle", key: "surfacePenSideButtonDrag" },
           },
           {
+            name: text.iosPencilName,
+            desc: text.iosPencilDescription,
+            control: { type: "toggle", key: "iosPencilMapping" },
+          },
+          {
             name: text.largerTouchHandlesName,
             desc: text.largerTouchHandlesDescription,
             control: { type: "toggle", key: "largeTouchHandles" },
@@ -620,6 +626,8 @@ export class DragDropSettingTab extends PluginSettingTab {
         return this.host.config.touchDropAction;
       case "surfacePenSideButtonDrag":
         return this.host.config.surfacePenSideButtonDrag;
+      case "iosPencilMapping":
+        return this.host.config.iosPencilMapping;
       case "largeTouchHandles":
         return this.host.config.largeTouchHandles;
       case "canvasSummaryButton":
@@ -740,6 +748,10 @@ export class DragDropSettingTab extends PluginSettingTab {
       case "surfacePenSideButtonDrag":
         if (typeof value !== "boolean") return;
         this.host.config.surfacePenSideButtonDrag = value;
+        break;
+      case "iosPencilMapping":
+        if (typeof value !== "boolean") return;
+        this.host.config.iosPencilMapping = value;
         break;
       case "largeTouchHandles":
         if (typeof value !== "boolean") return;

@@ -1075,6 +1075,58 @@ function measureCanvasNodeHeight(node, sizer) {
   }
 }
 
+// src/canvas-touch-navigation.ts
+function supportsCanvasNavigation(canvas) {
+  const candidate = canvas;
+  return typeof candidate.panBy === "function" && typeof candidate.zoomBy === "function" && typeof candidate.posFromEvt === "function" && typeof candidate.domPosFromEvt === "function";
+}
+var CanvasTouchNavigation = class {
+  constructor(target, canvas) {
+    this.target = target;
+    this.canvas = canvas;
+  }
+  pointers = /* @__PURE__ */ new Map();
+  add(event) {
+    try {
+      this.target.setPointerCapture(event.pointerId);
+    } catch {
+      return false;
+    }
+    this.pointers.set(event.pointerId, event);
+    return true;
+  }
+  move(event) {
+    if (!this.pointers.has(event.pointerId)) return;
+    const before = this.sample();
+    this.pointers.set(event.pointerId, event);
+    const after = this.sample();
+    const oldPosition = this.canvas.posFromEvt(before.center);
+    const newPosition = this.canvas.posFromEvt(after.center);
+    this.canvas.panBy(oldPosition.x - newPosition.x, oldPosition.y - newPosition.y);
+    if (before.distance > 0 && after.distance > 0) {
+      this.canvas.zoomBy(Math.log2(after.distance / before.distance), this.canvas.domPosFromEvt(after.center));
+    }
+  }
+  remove(pointerId) {
+    this.pointers.delete(pointerId);
+    try {
+      if (this.target.hasPointerCapture(pointerId)) this.target.releasePointerCapture(pointerId);
+    } catch {
+    }
+  }
+  clear() {
+    for (const pointerId of this.pointers.keys()) this.remove(pointerId);
+  }
+  sample() {
+    const [first, second] = Array.from(this.pointers.values());
+    const center = {
+      clientX: second ? (first.clientX + second.clientX) / 2 : first.clientX,
+      clientY: second ? (first.clientY + second.clientY) / 2 : first.clientY
+    };
+    return { center, distance: second ? Math.hypot(first.clientX - second.clientX, first.clientY - second.clientY) : 0 };
+  }
+};
+
 // src/markdown-drop.ts
 var import_state3 = require("@codemirror/state");
 var DIRECT_BLOCK_EMBED_RE = /^\s*!\[\[[^\]\r\n]*#\^[A-Za-z0-9-]+(?:\|[^\]\r\n]*)?\]\]\s*$/;
@@ -2085,10 +2137,14 @@ function findCanvasPenDragControl(container, target, clientX, clientY) {
 function canvasPenButtonForInteraction(interaction) {
   return interaction === "pan" ? 1 : 0;
 }
-function canvasPenInteractionForEvent(event) {
+function canvasPenInteractionForEvent(event, iosPencil = false) {
   if (event.pointerType !== "pen") return null;
+  if (iosPencil) return (event.buttons & 1) !== 0 ? "select" : null;
   if (isSurfacePenSideButton(event)) return "select";
   return (event.buttons & 1) !== 0 ? "pan" : null;
+}
+function isCanvasEditingElement(element) {
+  return element.closest('.canvas-node.is-editing, [contenteditable="true"], input, textarea, select, button, .canvas-controls, .canvas-menu, .canvas-card-menu') !== null;
 }
 function canvasPenButtonsForButton(button) {
   return button === 1 ? 4 : 1;
@@ -2165,6 +2221,10 @@ var DragSessionManager = class extends import_obsidian6.Component {
   canvasPenDrag = null;
   canvasPenNativePointer = null;
   canvasPenPassthroughPointer = null;
+  canvasTouchNavigation = null;
+  iosBlockedPointers = /* @__PURE__ */ new Map();
+  iosSuppressedTouches = /* @__PURE__ */ new Map();
+  iosClickSuppression = null;
   canvasPenContextMenuSuppression = null;
   syntheticCanvasEvents = /* @__PURE__ */ new WeakSet();
   ghostElement = null;
@@ -2204,12 +2264,14 @@ var DragSessionManager = class extends import_obsidian6.Component {
     );
   }
   onunload() {
+    for (const document of this.documentComponents.keys()) this.cancelCanvasInputs(document);
     this.cleanupDrag();
     this.cancelSelectionPointer();
     this.blockSelections.clear();
     this.documentComponents.clear();
   }
   handleHandlePointerDown(event, view, handle, element) {
+    if (this.ignoreIosCompetingHandlePointer(event, element)) return true;
     this.clearStaleBlockSelection(view);
     if (this.isStructuralDragBlocked(view, element)) {
       event.preventDefault();
@@ -2295,14 +2357,16 @@ var DragSessionManager = class extends import_obsidian6.Component {
     this.deferGhost(view.dom.ownerDocument, session.id, event.clientX, event.clientY);
   }
   beginPointerDrag(event, view, handle, element) {
+    if (this.ignoreIosCompetingHandlePointer(event, element)) return;
     if (this.isStructuralDragBlocked(view, element)) {
       event.preventDefault();
       event.stopPropagation();
       return;
     }
     const supportedPointer = event.pointerType === "touch" || event.pointerType === "pen";
-    const sideButton = isSurfacePenSideButton(event);
-    if (!supportedPointer || (sideButton ? !this.host.config.surfacePenSideButtonDrag : !event.isPrimary)) {
+    const iosPencil = this.iosPencilEnabled && event.pointerType === "pen";
+    const sideButton = iosPencil || isSurfacePenSideButton(event);
+    if (!supportedPointer || (!iosPencil && sideButton ? !this.host.config.surfacePenSideButtonDrag : !event.isPrimary)) {
       return;
     }
     event.preventDefault();
@@ -2314,6 +2378,7 @@ var DragSessionManager = class extends import_obsidian6.Component {
       handle,
       element,
       surfacePenSideButton: sideButton,
+      pointerType: event.pointerType,
       startX: event.clientX,
       startY: event.clientY,
       active: false,
@@ -2882,6 +2947,14 @@ var DragSessionManager = class extends import_obsidian6.Component {
         this.finishSelectionPointer(event.pointerId);
         this.handleCanvasPenPointerCancel(event);
       }, true);
+      component.registerDomEvent(ownerWindow2, "lostpointercapture", (event) => {
+        this.handleCanvasPenPointerCancel(event);
+      }, true);
+      component.registerDomEvent(ownerWindow2, "blur", () => this.cancelCanvasInputs(document));
+      for (const type of ["touchstart", "touchmove", "touchend", "touchcancel"]) {
+        component.registerDomEvent(ownerWindow2, type, (event) => this.suppressIosTouchEvent(event), { capture: true, passive: false });
+      }
+      component.registerDomEvent(ownerWindow2, "click", (event) => this.suppressIosClick(event), true);
       component.registerDomEvent(ownerWindow2, "mousedown", (event) => {
         this.handleCanvasPenMouseDown(event);
       }, true);
@@ -2895,6 +2968,9 @@ var DragSessionManager = class extends import_obsidian6.Component {
         this.handleCanvasPenContextMenu(event);
       }, true);
     }
+    component.registerDomEvent(document, "visibilitychange", () => {
+      if (document.hidden) this.cancelCanvasInputs(document);
+    });
     component.registerDomEvent(document, "keydown", (event) => {
       if (event.key !== "Escape") return;
       this.clearBlockSelectionsInDocument(document);
@@ -2906,6 +2982,7 @@ var DragSessionManager = class extends import_obsidian6.Component {
     this.documentComponents.set(document, component);
   }
   unregisterDocument(document) {
+    this.cancelCanvasInputs(document);
     if (this.canvasPenNativePointer?.ownerDocument === document) this.cleanupDrag();
     this.clearBlockSelectionsInDocument(document);
     if (this.selectionPointer?.view.dom.ownerDocument === document) {
@@ -2917,11 +2994,109 @@ var DragSessionManager = class extends import_obsidian6.Component {
     this.removeChild(component);
     this.documentComponents.delete(document);
   }
+  get iosPencilEnabled() {
+    return import_obsidian6.Platform.isIosApp && this.host.config.iosPencilMapping;
+  }
+  consumePointer(event) {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+  }
+  ignoreIosCompetingHandlePointer(event, element) {
+    if (!this.iosPencilEnabled || event.pointerType !== "pen" && event.pointerType !== "touch") return false;
+    if (!this.pointerDrag && !this.canvasPenDrag && !this.canvasPenNativePointer && !this.canvasTouchNavigation) return false;
+    this.iosBlockedPointers.set(event.pointerId, element.ownerDocument);
+    this.consumePointer(event);
+    return true;
+  }
+  cancelTouchNavigation(blockRemaining) {
+    const navigation = this.canvasTouchNavigation;
+    if (!navigation) return;
+    this.canvasTouchNavigation = null;
+    if (blockRemaining) {
+      for (const id of navigation.pointers.keys()) this.iosBlockedPointers.set(id, navigation.target.ownerDocument);
+    }
+    navigation.clear();
+  }
+  handleIosNavigationEvent(event, end) {
+    const blockedDocument = this.iosBlockedPointers.get(event.pointerId);
+    if (blockedDocument && this.isSameEventDocument(event, blockedDocument)) {
+      if (end) {
+        this.iosBlockedPointers.delete(event.pointerId);
+        this.rememberIosClick(event);
+      }
+      this.consumePointer(event);
+      return true;
+    }
+    const navigation = this.canvasTouchNavigation;
+    if (event.pointerType !== "touch" || !navigation?.pointers.has(event.pointerId) || !this.isSameEventDocument(event, navigation.target.ownerDocument)) return false;
+    this.consumePointer(event);
+    if (end) {
+      navigation.remove(event.pointerId);
+      this.rememberIosClick(event);
+      if (navigation.pointers.size === 0) this.canvasTouchNavigation = null;
+    } else if (!navigation.target.isConnected || !this.iosPencilEnabled) {
+      this.cancelTouchNavigation(true);
+    } else {
+      navigation.move(event);
+    }
+    return true;
+  }
+  rememberIosClick(event) {
+    if (!this.iosPencilEnabled) return;
+    const target = this.elementFromEventTarget(event.target);
+    if (target) this.iosClickSuppression = {
+      ownerDocument: target.ownerDocument,
+      clientX: event.clientX,
+      clientY: event.clientY,
+      expiresAt: Date.now() + 1e3
+    };
+  }
+  suppressIosClick(event) {
+    if (this.syntheticCanvasEvents.has(event)) return;
+    if ("pointerType" in event && event.pointerType === "mouse") return;
+    const suppression = this.iosClickSuppression;
+    if (suppression && suppression.expiresAt >= Date.now() && this.isSameEventDocument(event, suppression.ownerDocument) && Math.hypot(event.clientX - suppression.clientX, event.clientY - suppression.clientY) < 25) this.consumePointer(event);
+  }
+  suppressIosTouchEvent(event) {
+    const target = this.elementFromEventTarget(event.target);
+    if (!target) return;
+    const doc = target.ownerDocument;
+    if (event.type === "touchstart" && this.iosPencilEnabled) {
+      const owned = this.canvasTouchNavigation?.target.contains(target) || this.canvasPenDrag?.dispatchTarget.ownerDocument === doc || this.canvasPenNativePointer?.ownerDocument === doc || this.pointerDrag?.element.contains(target) || Array.from(this.iosBlockedPointers.values()).includes(doc);
+      if (owned && !isCanvasEditingElement(target)) {
+        for (const touch of Array.from(event.changedTouches)) this.iosSuppressedTouches.set(touch.identifier, doc);
+      }
+    }
+    let suppress = false;
+    for (const touch of Array.from(event.changedTouches)) {
+      if (this.iosSuppressedTouches.get(touch.identifier) !== doc) continue;
+      suppress = true;
+      if (event.type === "touchend" || event.type === "touchcancel") this.iosSuppressedTouches.delete(touch.identifier);
+    }
+    if (suppress) this.consumePointer(event);
+  }
+  refreshIosPenHover(event) {
+    const target = this.elementFromEventTarget(event.target);
+    if (!target || isCanvasEditingElement(target)) return;
+    this.host.app.workspace.iterateAllLeaves((leaf) => {
+      if (!isCanvasView(leaf.view) || !leaf.view.containerEl.contains(target)) return;
+      const canvas = leaf.view.canvas;
+      canvas.interactionHitTest?.(event);
+    });
+  }
+  cancelCanvasInputs(document) {
+    if (this.canvasTouchNavigation?.target.ownerDocument === document) this.cancelTouchNavigation(false);
+    if (this.canvasPenDrag?.dispatchTarget.ownerDocument === document || this.canvasPenNativePointer?.ownerDocument === document || this.iosPencilEnabled && this.pointerDrag?.element.ownerDocument === document) this.cleanupDrag();
+    for (const [id, doc] of this.iosBlockedPointers) if (doc === document) this.iosBlockedPointers.delete(id);
+    for (const [id, doc] of this.iosSuppressedTouches) if (doc === document) this.iosSuppressedTouches.delete(id);
+    if (this.iosClickSuppression?.ownerDocument === document) this.iosClickSuppression = null;
+    if (this.canvasPenPassthroughPointer?.ownerDocument === document) this.canvasPenPassthroughPointer = null;
+  }
   handleCanvasPenPointerDown(event) {
     if (this.syntheticCanvasEvents.has(event)) return;
-    const interactionType = canvasPenInteractionForEvent(event);
+    const iosMapping = this.iosPencilEnabled;
+    const interactionType = iosMapping && event.pointerType === "touch" ? "pan" : canvasPenInteractionForEvent(event, iosMapping);
     if (!interactionType) return;
-    if (this.canvasPenDrag || this.canvasPenNativePointer || this.pointerDrag) return;
     const target = this.elementFromEventTarget(event.target);
     if (!target) return;
     const interaction = this.findCanvasPenInteraction(
@@ -2930,6 +3105,35 @@ var DragSessionManager = class extends import_obsidian6.Component {
       event.clientX,
       event.clientY
     );
+    if (iosMapping && event.pointerType === "touch" && interaction) {
+      if (this.pointerDrag || this.canvasPenDrag || this.canvasPenNativePointer) {
+        this.iosBlockedPointers.set(event.pointerId, target.ownerDocument);
+        this.consumePointer(event);
+        return;
+      }
+      const navigation = this.canvasTouchNavigation;
+      if (navigation?.target.contains(target)) {
+        if (!navigation.add(event)) this.iosBlockedPointers.set(event.pointerId, target.ownerDocument);
+        this.consumePointer(event);
+        return;
+      }
+      if (interaction !== "passthrough" && !interaction.native) {
+        if (!event.isPrimary) return;
+        this.host.app.workspace.iterateAllLeaves((leaf) => {
+          if (!isCanvasView(leaf.view) || !leaf.view.containerEl.contains(target)) return;
+          if (supportsCanvasNavigation(leaf.view.canvas)) {
+            const next = new CanvasTouchNavigation(interaction.dispatchTarget, leaf.view.canvas);
+            if (next.add(event)) this.canvasTouchNavigation = next;
+          }
+        });
+        if (this.canvasTouchNavigation) this.consumePointer(event);
+        return;
+      }
+    }
+    if (iosMapping && event.pointerType === "pen" && interaction && interaction !== "passthrough") {
+      this.cancelTouchNavigation(true);
+    }
+    if (this.canvasPenDrag || this.canvasPenNativePointer || this.pointerDrag) return;
     if (interaction === "passthrough") {
       this.canvasPenPassthroughPointer = { pointerId: event.pointerId, ownerDocument: target.ownerDocument };
       return;
@@ -2946,13 +3150,14 @@ var DragSessionManager = class extends import_obsidian6.Component {
       this.dispatchCanvasPointerEvent("pointerdown", event, interaction.dispatchTarget, 1, 0);
       return;
     }
-    if (interactionType === "select" && !this.host.config.surfacePenSideButtonDrag) return;
+    if (interactionType === "select" && !iosMapping && !this.host.config.surfacePenSideButtonDrag) return;
     if (!interaction || !this.beginCanvasPenDrag(event, interaction)) return;
     event.preventDefault();
     event.stopImmediatePropagation();
   }
   handleCanvasPenPointerMove(event) {
     if (this.syntheticCanvasEvents.has(event)) return;
+    if (this.handleIosNavigationEvent(event, false)) return;
     if (this.isCanvasPenPassthroughPointer(event)) return;
     const nativePointer = this.canvasPenNativePointer;
     if (nativePointer && this.isCanvasPenNativePointer(event)) {
@@ -2964,6 +3169,10 @@ var DragSessionManager = class extends import_obsidian6.Component {
     }
     if (nativePointer) return;
     if (!this.canvasPenDrag) {
+      if (this.iosPencilEnabled) {
+        if (event.pointerType === "pen" && event.buttons === 0) this.refreshIosPenHover(event);
+        return;
+      }
       const interactionType = canvasPenInteractionForEvent(event);
       if (!interactionType || interactionType === "select" && !this.host.config.surfacePenSideButtonDrag) return;
       if (this.pointerDrag) return;
@@ -2980,6 +3189,8 @@ var DragSessionManager = class extends import_obsidian6.Component {
     }
     const drag = this.canvasPenDrag;
     if (!drag || drag.pointerId !== event.pointerId || !this.isSameEventDocument(event, drag.dispatchTarget.ownerDocument)) return;
+    drag.lastEvent = event;
+    drag.moved ||= hasCrossedPointerDragThreshold(drag.startX, drag.startY, event.clientX, event.clientY);
     event.preventDefault();
     event.stopImmediatePropagation();
     this.dispatchCanvasPointerEvent(
@@ -2992,6 +3203,7 @@ var DragSessionManager = class extends import_obsidian6.Component {
   }
   handleCanvasPenPointerUp(event) {
     if (this.syntheticCanvasEvents.has(event)) return;
+    if (this.handleIosNavigationEvent(event, true)) return;
     if (this.isCanvasPenPassthroughPointer(event)) {
       this.canvasPenPassthroughPointer = null;
       return;
@@ -3001,6 +3213,7 @@ var DragSessionManager = class extends import_obsidian6.Component {
       event.preventDefault();
       event.stopImmediatePropagation();
       this.dispatchCanvasPointerEvent("pointerup", event, nativePointer.dispatchTarget, 0, 0);
+      this.rememberIosClick(event);
       if (isSurfacePenSideButton(nativePointer.lastEvent)) {
         this.canvasPenContextMenuSuppression = { ownerDocument: nativePointer.ownerDocument, expiresAt: Date.now() + 1e3 };
       }
@@ -3012,6 +3225,16 @@ var DragSessionManager = class extends import_obsidian6.Component {
     event.preventDefault();
     event.stopImmediatePropagation();
     this.dispatchCanvasPointerEvent("pointerup", event, drag.dispatchTarget, 0, drag.button);
+    if (this.iosPencilEnabled && event.pointerType === "pen" && drag.button === 0 && !drag.moved) {
+      const ownerWindow2 = drag.dispatchTarget.ownerDocument.defaultView;
+      if (ownerWindow2) {
+        const click = new ownerWindow2.MouseEvent("click", createCanvasPointerEventInit(event, ownerWindow2, 0, 0));
+        this.syntheticCanvasEvents.add(click);
+        drag.dispatchTarget.dispatchEvent(click);
+        this.refreshIosPenHover(event);
+      }
+    }
+    this.rememberIosClick(event);
     if (drag.suppressContextMenu) {
       this.canvasPenContextMenuSuppression = {
         ownerDocument: drag.dispatchTarget.ownerDocument,
@@ -3022,6 +3245,7 @@ var DragSessionManager = class extends import_obsidian6.Component {
   }
   handleCanvasPenPointerCancel(event) {
     if (this.syntheticCanvasEvents.has(event)) return;
+    if (this.handleIosNavigationEvent(event, true)) return;
     if (this.isCanvasPenPassthroughPointer(event)) {
       this.canvasPenPassthroughPointer = null;
       return;
@@ -3043,6 +3267,10 @@ var DragSessionManager = class extends import_obsidian6.Component {
   }
   handleCanvasPenMouseDown(event) {
     if (this.syntheticCanvasEvents.has(event)) return;
+    if (this.canvasTouchNavigation && this.isSameEventDocument(event, this.canvasTouchNavigation.target.ownerDocument)) {
+      this.consumePointer(event);
+      return;
+    }
     if (this.suppressCanvasPenNativeMouse(event)) return;
     const drag = this.canvasPenDrag;
     if (!drag || !this.isSameEventDocument(event, drag.dispatchTarget.ownerDocument)) {
@@ -3089,7 +3317,11 @@ var DragSessionManager = class extends import_obsidian6.Component {
       dispatchTarget: interaction.dispatchTarget,
       captureTarget,
       button: interaction.button,
-      suppressContextMenu: isSurfacePenSideButton(event)
+      suppressContextMenu: isSurfacePenSideButton(event),
+      lastEvent: event,
+      startX: event.clientX,
+      startY: event.clientY,
+      moved: false
     };
     try {
       captureTarget.setPointerCapture(event.pointerId);
@@ -3149,13 +3381,13 @@ var DragSessionManager = class extends import_obsidian6.Component {
   clearCanvasPenDrag() {
     const drag = this.canvasPenDrag;
     if (!drag) return;
+    this.canvasPenDrag = null;
     try {
       if (drag.captureTarget.hasPointerCapture(drag.pointerId)) {
         drag.captureTarget.releasePointerCapture(drag.pointerId);
       }
     } catch {
     }
-    this.canvasPenDrag = null;
   }
   elementFromEventTarget(target) {
     if (!isNodeLike2(target)) return null;
@@ -3167,9 +3399,13 @@ var DragSessionManager = class extends import_obsidian6.Component {
       if (result || !isCanvasView(leaf.view)) return;
       const view = leaf.view;
       if (view.containerEl.ownerDocument === element.ownerDocument && view.containerEl.isConnected && view.containerEl.contains(element)) {
+        if (this.iosPencilEnabled && isCanvasEditingElement(element)) {
+          result = "passthrough";
+          return;
+        }
         const nativeTarget = findCanvasPenDragControl(view.containerEl, element, clientX, clientY);
         if (nativeTarget) {
-          if (isCanvasResizeHandleElement(nativeTarget) && interactionType !== "select") {
+          if (interactionType !== "select" && (isCanvasResizeHandleElement(nativeTarget) || this.iosPencilEnabled)) {
             const wrapper2 = this.findCanvasWrapper(view);
             if (!wrapper2?.contains(element)) return;
             result = {
@@ -3919,11 +4155,14 @@ var DragSessionManager = class extends import_obsidian6.Component {
     this.pendingGhostSessionId = null;
   }
   cleanupDrag() {
+    this.cancelTouchNavigation(true);
     this.clearMarkdownDropTarget();
     this.clearSourceHighlight();
     this.removeGhost();
     this.session = null;
     this.commitGate.reset();
+    const canvasDrag = this.canvasPenDrag;
+    if (canvasDrag) this.dispatchCanvasPointerEvent("pointercancel", canvasDrag.lastEvent, canvasDrag.dispatchTarget, 0, canvasDrag.button);
     this.clearCanvasPenDrag();
     const nativePointer = this.canvasPenNativePointer;
     if (nativePointer) {
@@ -5765,6 +6004,7 @@ var DEFAULT_SETTINGS = {
   handleVisibility: "hover",
   touchDropAction: "link-source",
   surfacePenSideButtonDrag: true,
+  iosPencilMapping: true,
   largeTouchHandles: true,
   canvasSummaryButton: true,
   editableBlockEmbeds: false,
@@ -5907,6 +6147,7 @@ function mergeSettings(loaded) {
     handlePosition: loaded?.handlePosition === "left" || loaded?.handlePosition === "right" ? loaded.handlePosition : DEFAULT_SETTINGS.handlePosition,
     handleVisibility: loaded?.handleVisibility === "hover" || loaded?.handleVisibility === "always" ? loaded.handleVisibility : DEFAULT_SETTINGS.handleVisibility,
     surfacePenSideButtonDrag: typeof loaded?.surfacePenSideButtonDrag === "boolean" ? loaded.surfacePenSideButtonDrag : DEFAULT_SETTINGS.surfacePenSideButtonDrag,
+    iosPencilMapping: typeof loaded?.iosPencilMapping === "boolean" ? loaded.iosPencilMapping : DEFAULT_SETTINGS.iosPencilMapping,
     largeTouchHandles: typeof loaded?.largeTouchHandles === "boolean" ? loaded.largeTouchHandles : DEFAULT_SETTINGS.largeTouchHandles,
     canvasSummaryButton: typeof loaded?.canvasSummaryButton === "boolean" ? loaded.canvasSummaryButton : DEFAULT_SETTINGS.canvasSummaryButton,
     editableBlockEmbeds: typeof loaded?.editableBlockEmbeds === "boolean" ? loaded.editableBlockEmbeds : DEFAULT_SETTINGS.editableBlockEmbeds,
@@ -6017,6 +6258,8 @@ var EN_SETTINGS_TEXT = {
   touchDropActionName: "Touch drop action",
   touchDropActionDescription: "Default action for finger or pen drops onto Canvas. A keyboard modifier uses the Canvas bindings above.",
   surfacePenName: "Surface Pen side-button drag",
+  iosPencilName: "iPad finger and Pencil mapping",
+  iosPencilDescription: "On iOS, fingers pan Canvas and two fingers zoom. Apple Pencil selects, moves, connects, and resizes cards; Markdown handles use your saved bindings. Editing fields keep their normal behavior. Turn off to restore the previous touch and pen behavior.",
   surfacePenDescription: "Use the side button to drag Markdown handles with your saved bindings or select on Canvas. The pen tip pans Canvas, including resize handles; hold the side button to resize a card. Connection points retain their drag action.",
   largerTouchHandlesName: "Larger touch handles",
   largerTouchHandlesDescription: "Use 44 x 44 touch targets for Markdown handles on touch-oriented devices.",
@@ -6118,6 +6361,8 @@ var ZH_SETTINGS_TEXT = {
   touchDropActionName: "\u89E6\u63A7\u62D6\u653E\u52A8\u4F5C",
   touchDropActionDescription: "\u624B\u6307\u6216\u624B\u5199\u7B14\u62D6\u653E\u5230 Canvas \u65F6\u7684\u9ED8\u8BA4\u52A8\u4F5C\uFF1B\u6309\u4E0B\u952E\u76D8\u4FEE\u9970\u952E\u65F6\u4F7F\u7528\u4E0A\u65B9\u7684 Canvas \u52A8\u4F5C\u7ED1\u5B9A\u3002",
   surfacePenName: "Surface Pen \u4FA7\u952E\u62D6\u62FD",
+  iosPencilName: "iPad \u624B\u6307\u4E0E Pencil \u5206\u5DE5",
+  iosPencilDescription: "\u4EC5\u5728 iOS \u751F\u6548\uFF1A\u624B\u6307\u5E73\u79FB\u753B\u5E03\u3001\u53CC\u6307\u7F29\u653E\uFF1BApple Pencil \u9009\u62E9\u3001\u79FB\u52A8\u3001\u8FDE\u7EBF\u548C\u8C03\u6574\u5361\u7247\u5927\u5C0F\uFF0C\u62D6\u52A8 Markdown \u6293\u624B\u65F6\u4F7F\u7528\u5DF2\u4FDD\u5B58\u7684\u52A8\u4F5C\u7ED1\u5B9A\u3002\u7F16\u8F91\u533A\u57DF\u4FDD\u6301\u6B63\u5E38\u8F93\u5165\u3002\u5173\u95ED\u540E\u6062\u590D\u539F\u6709\u89E6\u63A7\u548C\u624B\u5199\u7B14\u884C\u4E3A\u3002",
   surfacePenDescription: "\u6309\u4F4F\u4FA7\u952E\u53EF\u62D6\u52A8 Markdown \u6293\u624B\uFF0C\u5E76\u4F7F\u7528\u5DF2\u8BBE\u7F6E\u7684\u4FEE\u9970\u952E\u7ED1\u5B9A\uFF1B\u5728 Canvas \u4E0A\u7528\u4E8E\u9009\u62E9\u3002\u7B14\u5C16\u62D6\u52A8\u753B\u5E03\u65F6\uFF0C\u5373\u4F7F\u547D\u4E2D\u7F29\u653E\u624B\u67C4\u4E5F\u4F1A\u5E73\u79FB\uFF1B\u6309\u4F4F\u4FA7\u952E\u624D\u53EF\u8C03\u6574\u5361\u7247\u5927\u5C0F\u3002\u8FDE\u63A5\u70B9\u4ECD\u53EF\u76F4\u63A5\u62D6\u52A8\u8FDE\u7EBF\u3002",
   largerTouchHandlesName: "\u52A0\u5927\u89E6\u63A7\u6293\u624B",
   largerTouchHandlesDescription: "\u5728\u89E6\u63A7\u8BBE\u5907\u4E0A\u4E3A Markdown \u6293\u624B\u4F7F\u7528 44 \xD7 44 \u7684\u89E6\u63A7\u533A\u57DF\u3002",
@@ -6467,6 +6712,11 @@ var DragDropSettingTab = class extends import_obsidian10.PluginSettingTab {
             control: { type: "toggle", key: "surfacePenSideButtonDrag" }
           },
           {
+            name: text.iosPencilName,
+            desc: text.iosPencilDescription,
+            control: { type: "toggle", key: "iosPencilMapping" }
+          },
+          {
             name: text.largerTouchHandlesName,
             desc: text.largerTouchHandlesDescription,
             control: { type: "toggle", key: "largeTouchHandles" }
@@ -6644,6 +6894,8 @@ var DragDropSettingTab = class extends import_obsidian10.PluginSettingTab {
         return this.host.config.touchDropAction;
       case "surfacePenSideButtonDrag":
         return this.host.config.surfacePenSideButtonDrag;
+      case "iosPencilMapping":
+        return this.host.config.iosPencilMapping;
       case "largeTouchHandles":
         return this.host.config.largeTouchHandles;
       case "canvasSummaryButton":
@@ -6760,6 +7012,10 @@ var DragDropSettingTab = class extends import_obsidian10.PluginSettingTab {
       case "surfacePenSideButtonDrag":
         if (typeof value !== "boolean") return;
         this.host.config.surfacePenSideButtonDrag = value;
+        break;
+      case "iosPencilMapping":
+        if (typeof value !== "boolean") return;
+        this.host.config.iosPencilMapping = value;
         break;
       case "largeTouchHandles":
         if (typeof value !== "boolean") return;

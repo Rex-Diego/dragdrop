@@ -92,10 +92,16 @@ export function canvasPenButtonForInteraction(interaction: CanvasPenInteraction)
 
 export function canvasPenInteractionForEvent(
   event: Pick<PointerEvent, "pointerType" | "buttons">,
+  iosPencil = false,
 ): CanvasPenInteraction | null {
   if (event.pointerType !== "pen") return null;
+  if (iosPencil) return (event.buttons & 1) !== 0 ? "select" : null;
   if (isSurfacePenSideButton(event)) return "select";
   return (event.buttons & 1) !== 0 ? "pan" : null;
+}
+
+export function isCanvasEditingElement(element: Pick<Element, "closest">): boolean {
+  return element.closest('.canvas-node.is-editing, [contenteditable="true"], input, textarea, select, button, .canvas-controls, .canvas-menu, .canvas-card-menu') !== null;
 }
 
 export function canvasPenButtonsForButton(button: 0 | 1): 1 | 4 {

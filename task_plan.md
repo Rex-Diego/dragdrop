@@ -4,7 +4,15 @@
 实现名为 `dragdrop` 的 Obsidian 插件：删除 CardNote 的搜索、Excalidraw 和窗口管理功能，保留并重构 Markdown→Canvas 拖拽；阶段 6 实现 Markdown→Markdown 直通拖拽和 Canvas 归纳按钮，阶段 7 实现可编辑块嵌入，阶段 8 选择性融合 obsidian-dragger 的结构重排、多选、块菜单、跨文件目标、视觉和移动端交互。鼠标链路支持桌面端与弹出窗口，触控链路优先支持 Surface 并为 iPad 提供能力守卫下的实验兼容。
 
 ## 当前阶段
-阶段 8：obsidian-dragger 选择性融合（8.10 用户确认原问题解决；8.11 侧键缩放规则已实现并部署，iPad 映射完成资料调研；阶段 7 实机验收仍独立保留）
+阶段 8：obsidian-dragger 选择性融合（0.1.8 已发布；8.12 实施 iPad 手指平移、Pencil 操作映射；阶段 7 实机验收仍独立保留）
+
+### 8.12：iPad 手指与 Pencil 分工
+- [x] 先发布 Surface 修复版 0.1.8，提交 1e02ca6，分支/tag 已推送，正式 Release 三附件哈希一致。
+- [x] 用户锁定手指替代笔尖，Pencil 替代侧键；覆盖之前屏幕操作键建议。
+- [ ] 实施仅 iOS 启用的可关闭映射，复用 Canvas 原生交互与 Markdown 事务。
+- [ ] 处理多指缩放、输入控件旁路、掌触竞争和笔势取消。
+- [ ] 自动化检查、构建与部署。
+- [ ] 实体 iPad 验证。
 
 ### 8.11：侧键缩放与 iPad 映射调研（2026-09-08）
 - [x] 普通笔尖命中八方向缩放手柄时平移；落笔时按住侧键才进入原生缩放，连接点继续直接连线。
@@ -12,7 +20,7 @@
 - [x] 两个插件目录部署完成，构建哈希一致，data.json 与 graph-worker.js 未变。
 - [x] 核对 iOS 商店版本、Obsidian API、WebKit 与 Apple 文档；方案与来源写入 ipad-pencil-research.md。
 - [ ] 用户实机复核本次新增的笔尖平移/侧键缩放规则。
-- [ ] iPad 映射仍在讨论阶段，待设备探针与实机验证后实施。
+- [x] iPad 映射已获用户确认，进入 8.12；实机验收独立保留。
 
 ### 8.10：设置组织与 Surface Pen Canvas 控件（2026-09-08）
 - [x] 移除同文件别名双链入口，加载时将同文件旧 link-source 收敛为 embed-source；跨文件双链保留。
